@@ -12,6 +12,10 @@ _Avoid_: Note, item, flashcard (as a type name)
 A named collection of Cards. v1 has a default Deck and allows additional named Decks.
 _Avoid_: Folder, set, pile, collection
 
+**Study**:
+A session of Reviews drawn from one Deck (due Cards from that Deck only in v1).
+_Avoid_: Study all, quiz mode, session (as the primary noun)
+
 **Review**:
 One attempt to recall a Card's back: show front, reveal back, then a Rating that updates scheduling. No typed answer in v1.
 _Avoid_: Study, quiz, attempt (as the noun for this act)
