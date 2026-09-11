@@ -1,0 +1,47 @@
+<section id="cards">
+  {% if let Some(message) = error %}
+  <p class="error" role="alert">{{ message }}</p>
+  {% endif %}
+
+  <form class="create-card" hx-post="/decks/{{ deck_id }}/cards" hx-target="#cards" hx-swap="outerHTML">
+    <label>
+      Front
+      <textarea name="front" required rows="3" placeholder="Prompt" autocomplete="off"></textarea>
+    </label>
+    <label>
+      Back
+      <textarea name="back" required rows="3" placeholder="Answer" autocomplete="off"></textarea>
+    </label>
+    <button type="submit">Create Card</button>
+  </form>
+
+  <h2>Cards</h2>
+  {% if cards.is_empty() %}
+  <p class="empty">No Cards in this Deck yet.</p>
+  {% else %}
+  <ul class="card-list">
+    {% for card in cards %}
+    <li>
+      <div class="card-sides">
+        <p class="card-front">{{ card.front }}</p>
+        <p class="card-back">{{ card.back }}</p>
+      </div>
+      <form class="edit-card" hx-post="/cards/{{ card.id }}" hx-target="#cards" hx-swap="outerHTML">
+        <label>
+          <span class="visually-hidden">Front</span>
+          <textarea name="front" required rows="2" autocomplete="off">{{ card.front }}</textarea>
+        </label>
+        <label>
+          <span class="visually-hidden">Back</span>
+          <textarea name="back" required rows="2" autocomplete="off">{{ card.back }}</textarea>
+        </label>
+        <button type="submit">Save</button>
+      </form>
+      <form class="inline" hx-post="/cards/{{ card.id }}/delete" hx-target="#cards" hx-swap="outerHTML" hx-confirm="Delete this Card?">
+        <button type="submit">Delete</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

@@ -1,12 +1,22 @@
+mod cards;
 mod config;
 mod decks;
+mod error;
 
 pub use config::{Config, ConfigError, DEFAULT_BIND, DEFAULT_DB_PATH};
 
 use axum::Router;
+use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use db::SqlitePool;
 use tower_http::services::ServeDir;
+
+fn wants_fragment(headers: &HeaderMap) -> bool {
+    headers
+        .get("HX-Request")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == "true")
+}
 
 fn static_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/static")
@@ -16,8 +26,12 @@ pub fn app(pool: SqlitePool) -> Router {
     Router::new()
         .route("/", get(decks::home))
         .route("/decks", post(decks::create_deck))
+        .route("/decks/{id}", get(cards::deck_page))
         .route("/decks/{id}/rename", post(decks::rename_deck))
         .route("/decks/{id}/delete", post(decks::delete_deck))
+        .route("/decks/{id}/cards", post(cards::create_card))
+        .route("/cards/{id}", post(cards::update_card))
+        .route("/cards/{id}/delete", post(cards::delete_card))
         .nest_service("/static", ServeDir::new(static_dir()))
         .with_state(pool)
 }
@@ -25,21 +39,25 @@ pub fn app(pool: SqlitePool) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AppError;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
+    use axum::response::IntoResponse;
     use tower::ServiceExt;
 
-    async fn test_pool() -> SqlitePool {
-        let path = std::env::temp_dir().join(format!(
-            "flashcards-web-test-{}-{}.db",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_file(&path);
-        db::open(&path).await.unwrap()
+    struct TestDb {
+        // Drop pool before TempDir so the SQLite file can be unlinked.
+        _dir: tempfile::TempDir,
+        pool: SqlitePool,
+    }
+
+    async fn test_db() -> TestDb {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flashcards.db");
+        TestDb {
+            pool: db::open(&path).await.unwrap(),
+            _dir: dir,
+        }
     }
 
     async fn request(app: Router, req: Request<Body>) -> (StatusCode, String) {
@@ -70,9 +88,14 @@ mod tests {
 
     #[tokio::test]
     async fn index_lists_default_deck_and_local_static() {
-        let (status, html) = get(app(test_pool().await), "/").await;
+        let db = test_db().await;
+        let (status, html) = get(app(db.pool.clone()), "/").await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Default"));
+        assert!(html.contains(&format!(
+            "/decks/{}",
+            db::list_decks(&db.pool).await.unwrap()[0].id
+        )));
         assert!(html.contains("due 0"));
         assert!(html.contains("new 0"));
         assert!(html.contains("hx-confirm"));
@@ -85,7 +108,8 @@ mod tests {
 
     #[tokio::test]
     async fn serves_vendored_htmx() {
-        let (status, js) = get(app(test_pool().await), "/static/htmx.min.js").await;
+        let db = test_db().await;
+        let (status, js) = get(app(db.pool.clone()), "/static/htmx.min.js").await;
         assert_eq!(status, StatusCode::OK);
         assert!(
             js.len() > 10_000,
@@ -98,21 +122,23 @@ mod tests {
 
     #[tokio::test]
     async fn serves_local_css() {
-        let (status, css) = get(app(test_pool().await), "/static/app.css").await;
+        let db = test_db().await;
+        let (status, css) = get(app(db.pool.clone()), "/static/app.css").await;
         assert_eq!(status, StatusCode::OK);
         assert!(css.contains("body"));
     }
 
     #[tokio::test]
     async fn htmx_create_rename_delete_and_default_recreate() {
-        let pool = test_pool().await;
+        let db = test_db().await;
+        let pool = &db.pool;
         let (status, html) = post_form(app(pool.clone()), "/decks", "name=Spanish", true).await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Spanish"));
         assert!(html.contains("Default"));
         assert!(html.contains("id=\"decks\""));
 
-        let decks = db::list_decks(&pool).await.unwrap();
+        let decks = db::list_decks(pool).await.unwrap();
         let spanish = decks.iter().find(|d| d.name == "Spanish").unwrap();
         let (status, html) = post_form(
             app(pool.clone()),
@@ -125,14 +151,14 @@ mod tests {
         assert!(html.contains("Italiano"));
         assert!(!html.contains("Spanish"));
 
-        let default_id = db::list_decks(&pool)
+        let default_id = db::list_decks(pool)
             .await
             .unwrap()
             .into_iter()
             .find(|d| d.name == db::DEFAULT_DECK_NAME)
             .unwrap()
             .id;
-        let italiano_id = db::list_decks(&pool)
+        let italiano_id = db::list_decks(pool)
             .await
             .unwrap()
             .into_iter()
@@ -160,7 +186,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Default"));
-        let decks = db::list_decks(&pool).await.unwrap();
+        let decks = db::list_decks(pool).await.unwrap();
         assert_eq!(decks.len(), 1);
         assert_eq!(decks[0].name, db::DEFAULT_DECK_NAME);
         assert_ne!(decks[0].id, italiano_id);
@@ -169,7 +195,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_rejects_empty_name() {
-        let (status, html) = post_form(app(test_pool().await), "/decks", "name=+++", true).await;
+        let db = test_db().await;
+        let (status, html) = post_form(app(db.pool.clone()), "/decks", "name=+++", true).await;
         // "+" is form-urlencoded space; three pluses → whitespace-only.
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Deck name cannot be empty"));
@@ -178,11 +205,162 @@ mod tests {
 
     #[tokio::test]
     async fn non_htmx_create_redirects_home() {
-        let pool = test_pool().await;
-        let (status, _) = post_form(app(pool.clone()), "/decks", "name=French", false).await;
+        let db = test_db().await;
+        let (status, _) = post_form(app(db.pool.clone()), "/decks", "name=French", false).await;
         assert_eq!(status, StatusCode::SEE_OTHER);
-        let (status, html) = get(app(pool), "/").await;
+        let (status, html) = get(app(db.pool.clone()), "/").await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("French"));
+    }
+
+    #[tokio::test]
+    async fn deck_page_lists_cards_empty_then_crud() {
+        let db = test_db().await;
+        let pool = &db.pool;
+        let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{deck_id}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Default"));
+        assert!(html.contains("No Cards in this Deck yet"));
+        assert!(html.contains("id=\"cards\""));
+
+        let (status, html) = post_form(
+            app(pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=Capital+of+France&back=Paris",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Capital of France"));
+        assert!(html.contains("Paris"));
+        assert!(html.contains("id=\"cards\""));
+        assert!(!html.contains("No Cards in this Deck yet"));
+
+        let card_id = db::list_cards_in_deck(pool, deck_id).await.unwrap()[0].id;
+        let (status, html) = post_form(
+            app(pool.clone()),
+            &format!("/cards/{card_id}"),
+            "front=Capital+of+Italy&back=Rome",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Capital of Italy"));
+        assert!(html.contains("Rome"));
+        assert!(!html.contains("France"));
+        assert!(!html.contains("Paris"));
+
+        let (status, html) = post_form(
+            app(pool.clone()),
+            &format!("/cards/{card_id}/delete"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards in this Deck yet"));
+        assert!(!html.contains("Rome"));
+        assert!(
+            db::list_cards_in_deck(pool, deck_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn create_card_rejects_empty_sides() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=+++&back=Paris",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Card front cannot be empty"));
+        assert!(
+            db::list_cards_in_deck(&db.pool, deck_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=Q&back=+++",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Card back cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn non_htmx_create_card_redirects_to_deck() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=Q&back=A",
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains(">Q</p>"));
+        assert!(html.contains(">A</p>"));
+    }
+
+    #[tokio::test]
+    async fn missing_deck_or_card_is_not_found() {
+        let db = test_db().await;
+        let (status, _) = get(app(db.pool.clone()), "/decks/999").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            "/decks/999/cards",
+            "front=Q&back=A",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) =
+            post_form(app(db.pool.clone()), "/cards/999", "front=Q&back=A", true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = post_form(app(db.pool.clone()), "/cards/999/delete", "", true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn card_text_is_html_escaped() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        db::create_card(&db.pool, deck_id, "<script>alert(1)</script>", "a&b")
+            .await
+            .unwrap();
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(html.contains("a&amp;b"));
+    }
+
+    #[tokio::test]
+    async fn app_error_hides_internal_details() {
+        let response = AppError::Db(db::Error::CardNotFound { card_id: 42 }).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        assert_eq!(body, "Internal server error");
+        assert!(!body.contains("42"));
+        assert!(!body.contains("card"));
     }
 }
