@@ -33,9 +33,9 @@ The outcome of a Review: Again, Hard, Good, or Easy. Mapped into FSRS as the fou
 _Avoid_: Grade, score, button
 
 **Due**:
-A Card is due when its next-review time has arrived or passed; Reviews are drawn from due Cards.
+A Card is due when its next-review time has arrived or passed; Reviews are drawn from due Cards. In v1, scheduled intervals are floored to at least one whole day (no sub-day / learning-step dues).
 _Avoid_: Ready, overdue (as the primary term)
 
 **Scheduler**:
-FSRS (Free Spaced Repetition Scheduler) via the `fsrs` crate (FSRS v6, default parameters in v1). Not SM-2; not the lighter `rs-fsrs` crate.
+FSRS (Free Spaced Repetition Scheduler) via the `fsrs` crate (FSRS v6, default parameters in v1). Not SM-2; not the lighter `rs-fsrs` crate. v1 applies a minimum interval of 1 day after rounding (Again included). Sub-day / learning-step scheduling is deferred to a future grill (issue #21).
 _Avoid_: SM-2, Anki algorithm (ambiguous), SRS (generic), rs-fsrs

@@ -1,6 +1,6 @@
 # Flashcards v1 — Spec
 
-Status: **accepted** (grilled 2026-09-11). Implementation is deferred until explicitly triggered.
+Status: **accepted** (grilled 2026-09-11; Again min-interval clarified 2026-09-11). Implementation in progress.
 
 Domain language lives in [`CONTEXT.md`](../CONTEXT.md). Hard decisions: [`docs/adr/`](adr/).
 
@@ -16,6 +16,7 @@ A single-user, local Anki-like study app: create Decks and plain-text Cards, Stu
 - Stats charts
 - Global “Study all”
 - FSRS parameter optimization UI (store Review log so it can come later)
+- Sub-day / learning-step intervals (Again floored to ≥1 day; future grill #21)
 - Docker / cloud hosting
 
 ## Stack
@@ -27,7 +28,7 @@ A single-user, local Anki-like study app: create Decks and plain-text Cards, Stu
 | Templates | Askama (full pages + HTMX fragments) |
 | Front-end | Vendored `htmx.min.js` + small local CSS in `crates/web/static/` |
 | DB | SQLite via SQLx + migrations |
-| Scheduler | `fsrs` crate (FSRS v6), default parameters |
+| Scheduler | `fsrs` crate (FSRS v6), default parameters; intervals floored to ≥1 day |
 
 ## Workspace
 
@@ -84,7 +85,7 @@ flashcards/
 3. Show back + Again / Hard / Good / Easy.
 4. Persist updated FSRS state + due; append Review log; HTMX-load next Card (or empty state).
 
-No typed answers in v1.
+No typed answers in v1. Scheduled due times use FSRS intervals **rounded and floored to at least 1 day** (including Again).
 
 ### Review log
 
@@ -113,7 +114,7 @@ Exact paths may shift during implementation; behavior must not.
 1. `cargo run` from repo root serves the app on `127.0.0.1:3000`.
 2. Fresh start creates `data/flashcards.db` and a `Default` Deck.
 3. User can manage Decks and Cards as above.
-4. Study on a Deck runs the Review flow; ratings change due dates via FSRS.
+4. Study on a Deck runs the Review flow; ratings change due dates via FSRS (≥1 day intervals).
 5. New Cards respect the 20/day local-day cap per Deck.
 6. Deleting the last Deck recreates `Default`.
 7. `FLASHCARDS_DB` and `FLASHCARDS_BIND` work.
@@ -121,4 +122,4 @@ Exact paths may shift during implementation; behavior must not.
 
 ## Non-goals for implementers
 
-Do not add markdown, auth, sync, import/export, or optimizer UI in the v1 pass.
+Do not add markdown, auth, sync, import/export, optimizer UI, or sub-day learning steps in the v1 pass.
