@@ -18,6 +18,7 @@
       <div class="deck-heading">
         <strong><a href="/decks/{{ deck.id }}">{{ deck.name }}</a></strong>
         <span class="counts">due {{ deck.due_count }} · new {{ deck.new_count }}</span>
+        <a href="/decks/{{ deck.id }}/study">Study</a>
       </div>
       <form class="inline" hx-post="/decks/{{ deck.id }}/rename" hx-target="#decks" hx-swap="outerHTML">
         <label>

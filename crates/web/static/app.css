@@ -132,3 +132,14 @@ textarea {
 .empty {
   color: color-mix(in srgb, currentColor 65%, transparent);
 }
+
+.study-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
-use domain::{Card, Rating, ScheduleError, ScheduledReview};
+use domain::ScheduleError;
+
+pub use domain::{Card, Rating, ScheduledReview};
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
@@ -392,6 +394,9 @@ pub async fn list_card_text_in_deck(
 }
 
 /// Create a New Card. Front/back are trimmed; empty sides are rejected.
+///
+/// Missing (or concurrently deleted) Decks are `DeckNotFound` via the FK,
+/// not a pre-check that can race into a 500.
 pub async fn create_card(
     pool: &SqlitePool,
     deck_id: i64,
@@ -400,17 +405,18 @@ pub async fn create_card(
 ) -> Result<Card, Error> {
     let front = normalize_card_side(front, true)?;
     let back = normalize_card_side(back, false)?;
-    if get_deck(pool, deck_id).await?.is_none() {
-        return Err(Error::DeckNotFound { deck_id });
-    }
-    let id = sqlx::query_scalar(
+    let id = match sqlx::query_scalar(
         "INSERT INTO cards (deck_id, front, back) VALUES (?, ?, ?) RETURNING id",
     )
     .bind(deck_id)
     .bind(&front)
     .bind(&back)
     .fetch_one(pool)
-    .await?;
+    .await
+    {
+        Ok(id) => id,
+        Err(err) => return Err(map_missing_parent_deck(err, deck_id)),
+    };
     Ok(Card {
         id,
         deck_id,
@@ -423,6 +429,9 @@ pub async fn create_card(
 }
 
 /// Update a Card’s front/back. Same trim/empty rules as [`create_card`].
+///
+/// `RETURNING` is one statement so a concurrent delete cannot 404 after
+/// a successful UPDATE.
 pub async fn update_card(
     pool: &SqlitePool,
     card_id: i64,
@@ -431,18 +440,17 @@ pub async fn update_card(
 ) -> Result<Card, Error> {
     let front = normalize_card_side(front, true)?;
     let back = normalize_card_side(back, false)?;
-    let result = sqlx::query("UPDATE cards SET front = ?, back = ? WHERE id = ?")
-        .bind(&front)
-        .bind(&back)
-        .bind(card_id)
-        .execute(pool)
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(Error::CardNotFound { card_id });
-    }
-    get_card(pool, card_id)
-        .await?
-        .ok_or(Error::CardNotFound { card_id })
+    let row = sqlx::query_as::<_, CardRow>(
+        "UPDATE cards SET front = ?, back = ? WHERE id = ?
+         RETURNING id, deck_id, front, back, stability, difficulty, due, last_review",
+    )
+    .bind(&front)
+    .bind(&back)
+    .bind(card_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(Error::CardNotFound { card_id })?;
+    card_from_row(row)
 }
 
 pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<i64, Error> {
@@ -451,6 +459,22 @@ pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<i64, Error> 
         .fetch_optional(pool)
         .await?
         .ok_or(Error::CardNotFound { card_id })
+}
+
+fn map_missing_parent_deck(err: sqlx::Error, deck_id: i64) -> Error {
+    if is_foreign_key_violation(&err) {
+        Error::DeckNotFound { deck_id }
+    } else {
+        Error::from(err)
+    }
+}
+
+fn is_foreign_key_violation(err: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(db_err) = err else {
+        return false;
+    };
+    db_err.code().as_deref() == Some("787")
+        || db_err.message().contains("FOREIGN KEY constraint failed")
 }
 
 fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
@@ -964,6 +988,15 @@ mod tests {
         assert_eq!(updated.front, "Q2");
         assert_eq!(updated.back, "A2");
         assert!(updated.is_new());
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let scheduled = rate_card(&pool, &updated, Rating::Good, now).await.unwrap();
+        let edited = update_card(&pool, created.id, "Q3", "A3").await.unwrap();
+        assert_eq!(edited.front, "Q3");
+        assert_eq!(edited.back, "A3");
+        assert_eq!(edited.memory, Some(scheduled.memory));
+        assert_eq!(edited.due, Some(scheduled.due));
+        assert_eq!(edited.last_review, Some(now));
 
         let deleted_deck_id = delete_card(&pool, created.id).await.unwrap();
         assert_eq!(deleted_deck_id, deck_id);
