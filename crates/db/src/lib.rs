@@ -1,5 +1,6 @@
 //! SQLx models, migrations, and queries.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
@@ -43,6 +44,8 @@ pub enum Error {
         card_id: i64,
     },
     EmptyDeckName,
+    EmptyCardFront,
+    EmptyCardBack,
     DeckNotFound {
         deck_id: i64,
     },
@@ -74,6 +77,8 @@ impl std::fmt::Display for Error {
                 )
             }
             Self::EmptyDeckName => write!(f, "Deck name cannot be empty"),
+            Self::EmptyCardFront => write!(f, "Card front cannot be empty"),
+            Self::EmptyCardBack => write!(f, "Card back cannot be empty"),
             Self::DeckNotFound { deck_id } => write!(f, "deck {deck_id} not found"),
             Self::CardNotFound { card_id } => write!(f, "card {card_id} not found"),
         }
@@ -90,6 +95,8 @@ impl std::error::Error for Error {
             Self::InvalidTimestamp { source, .. } => Some(source),
             Self::IncompleteFsrs { .. }
             | Self::EmptyDeckName
+            | Self::EmptyCardFront
+            | Self::EmptyCardBack
             | Self::DeckNotFound { .. }
             | Self::CardNotFound { .. } => None,
         }
@@ -250,23 +257,73 @@ fn normalize_deck_name(name: &str) -> Result<String, Error> {
     }
 }
 
+/// Home due/new counts in two queries (all Decks’ card rows + first Reviews),
+/// not one `study_queue` per Deck.
 pub async fn list_deck_summaries<Tz: TimeZone>(
     pool: &SqlitePool,
     now_local: DateTime<Tz>,
 ) -> Result<Vec<DeckSummary>, Error> {
-    let decks = list_decks(pool).await?;
-    let mut summaries = Vec::with_capacity(decks.len());
-    for deck in decks {
-        let queue = study_queue(pool, deck.id, now_local.clone()).await?;
-        let due_count = queue.iter().filter(|card| !card.is_new()).count();
-        let new_count = queue.iter().filter(|card| card.is_new()).count();
-        summaries.push(DeckSummary {
-            deck,
-            due_count,
-            new_count,
-        });
+    let now_utc = now_local.with_timezone(&Utc);
+    let rows = sqlx::query_as::<_, (i64, String, Option<i64>, Option<f64>, Option<String>)>(
+        "SELECT decks.id, decks.name, cards.id, cards.stability, cards.due
+         FROM decks
+         LEFT JOIN cards ON cards.deck_id = decks.id
+         ORDER BY decks.id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let firsts = sqlx::query_as::<_, (i64, String)>(
+        "SELECT cards.deck_id, MIN(review_logs.rated_at)
+         FROM review_logs
+         INNER JOIN cards ON cards.id = review_logs.card_id
+         GROUP BY review_logs.card_id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let tz = now_local.timezone();
+    let mut introduced_today: HashMap<i64, usize> = HashMap::new();
+    for (deck_id, rated_at) in firsts {
+        let instant = parse_utc(&rated_at)?.with_timezone(&tz);
+        if instant.date_naive() == now_local.date_naive() {
+            *introduced_today.entry(deck_id).or_default() += 1;
+        }
     }
-    Ok(summaries)
+
+    let mut order = Vec::new();
+    let mut by_deck: HashMap<i64, DeckSummary> = HashMap::new();
+    for (id, name, card_id, stability, due) in rows {
+        let summary = by_deck.entry(id).or_insert_with(|| {
+            order.push(id);
+            DeckSummary {
+                deck: Deck { id, name },
+                due_count: 0,
+                new_count: 0,
+            }
+        });
+        match (card_id, stability, due) {
+            (None, _, _) => {}
+            (Some(_), None, _) => summary.new_count += 1,
+            (Some(_), Some(_), Some(due)) => {
+                if parse_utc(&due)? <= now_utc {
+                    summary.due_count += 1;
+                }
+            }
+            (Some(card_id), _, _) => return Err(Error::IncompleteFsrs { card_id }),
+        }
+    }
+
+    Ok(order
+        .into_iter()
+        .map(|id| {
+            let mut summary = by_deck.remove(&id).expect("deck id from scan");
+            let remaining = domain::NEW_CARDS_PER_LOCAL_DAY
+                .saturating_sub(introduced_today.get(&id).copied().unwrap_or(0));
+            summary.new_count = summary.new_count.min(remaining);
+            summary
+        })
+        .collect())
 }
 
 type CardRow = (
@@ -307,6 +364,84 @@ pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<C
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(card_from_row).collect()
+}
+
+/// Create a New Card. Front/back are trimmed; empty sides are rejected.
+pub async fn create_card(
+    pool: &SqlitePool,
+    deck_id: i64,
+    front: &str,
+    back: &str,
+) -> Result<Card, Error> {
+    let front = normalize_card_side(front, true)?;
+    let back = normalize_card_side(back, false)?;
+    if get_deck(pool, deck_id).await?.is_none() {
+        return Err(Error::DeckNotFound { deck_id });
+    }
+    let id = sqlx::query_scalar(
+        "INSERT INTO cards (deck_id, front, back) VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(deck_id)
+    .bind(&front)
+    .bind(&back)
+    .fetch_one(pool)
+    .await?;
+    Ok(Card {
+        id,
+        deck_id,
+        front,
+        back,
+        memory: None,
+        due: None,
+        last_review: None,
+    })
+}
+
+/// Update a Card’s front/back. Same trim/empty rules as [`create_card`].
+pub async fn update_card(
+    pool: &SqlitePool,
+    card_id: i64,
+    front: &str,
+    back: &str,
+) -> Result<Card, Error> {
+    let front = normalize_card_side(front, true)?;
+    let back = normalize_card_side(back, false)?;
+    let result = sqlx::query("UPDATE cards SET front = ?, back = ? WHERE id = ?")
+        .bind(&front)
+        .bind(&back)
+        .bind(card_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::CardNotFound { card_id });
+    }
+    get_card(pool, card_id)
+        .await?
+        .ok_or(Error::CardNotFound { card_id })
+}
+
+pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<(), Error> {
+    let result = sqlx::query("DELETE FROM cards WHERE id = ?")
+        .bind(card_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::CardNotFound { card_id });
+    }
+    Ok(())
+}
+
+fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
+    let text = text.trim();
+    if text.is_empty() {
+        Err(if front {
+            Error::EmptyCardFront
+        } else {
+            Error::EmptyCardBack
+        })
+    } else {
+        Ok(text.to_string())
+    }
 }
 
 /// First Review instant per Card in the Deck (UTC), for the local-day new-card cap.
@@ -765,6 +900,89 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].new_count, 1);
         assert_eq!(summaries[0].due_count, 1);
+    }
+
+    #[tokio::test]
+    async fn list_deck_summaries_caps_new_and_ignores_not_due() {
+        let pool = open_memory().await;
+        let default_id = list_decks(&pool).await.unwrap()[0].id;
+        for _ in 0..25 {
+            insert_card(&pool, default_id).await;
+        }
+        let other_id = insert_deck(&pool, "Later").await;
+        let later_id = insert_card(&pool, other_id).await;
+        let later = get_card(&pool, later_id).await.unwrap().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        rate_card(&pool, &later, Rating::Good, now).await.unwrap();
+
+        let summaries = list_deck_summaries(&pool, now).await.unwrap();
+        let default = summaries.iter().find(|s| s.deck.id == default_id).unwrap();
+        let later_deck = summaries.iter().find(|s| s.deck.id == other_id).unwrap();
+        assert_eq!(default.new_count, domain::NEW_CARDS_PER_LOCAL_DAY);
+        assert_eq!(default.due_count, 0);
+        assert_eq!(later_deck.new_count, 0);
+        assert_eq!(later_deck.due_count, 0);
+    }
+
+    #[tokio::test]
+    async fn create_update_delete_card() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let created = create_card(&pool, deck_id, "  Q  ", "  A  ").await.unwrap();
+        assert_eq!(created.front, "Q");
+        assert_eq!(created.back, "A");
+        assert!(created.is_new());
+
+        let updated = update_card(&pool, created.id, "Q2", "A2").await.unwrap();
+        assert_eq!(updated.front, "Q2");
+        assert_eq!(updated.back, "A2");
+        assert!(updated.is_new());
+
+        delete_card(&pool, created.id).await.unwrap();
+        assert!(get_card(&pool, created.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn create_card_rejects_empty_sides_and_missing_deck() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        assert!(matches!(
+            create_card(&pool, deck_id, "   ", "A").await.unwrap_err(),
+            Error::EmptyCardFront
+        ));
+        assert!(matches!(
+            create_card(&pool, deck_id, "Q", "  ").await.unwrap_err(),
+            Error::EmptyCardBack
+        ));
+        assert!(matches!(
+            create_card(&pool, 999, "Q", "A").await.unwrap_err(),
+            Error::DeckNotFound { deck_id: 999 }
+        ));
+        assert_eq!(list_cards_in_deck(&pool, deck_id).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_and_delete_missing_card_are_not_found() {
+        let pool = open_memory().await;
+        assert!(matches!(
+            update_card(&pool, 999, "Q", "A").await.unwrap_err(),
+            Error::CardNotFound { card_id: 999 }
+        ));
+        assert!(matches!(
+            delete_card(&pool, 999).await.unwrap_err(),
+            Error::CardNotFound { card_id: 999 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_card_cascades_review_logs() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let card_id = insert_card(&pool, deck_id).await;
+        insert_review_log(&pool, card_id).await;
+        delete_card(&pool, card_id).await.unwrap();
+        assert_eq!(count(&pool, "cards").await, 0);
+        assert_eq!(count(&pool, "review_logs").await, 0);
     }
 
     #[tokio::test]

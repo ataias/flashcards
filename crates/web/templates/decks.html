@@ -16,7 +16,7 @@
     {% for deck in decks %}
     <li>
       <div class="deck-heading">
-        <strong>{{ deck.name }}</strong>
+        <strong><a href="/decks/{{ deck.id }}">{{ deck.name }}</a></strong>
         <span class="counts">due {{ deck.due_count }} · new {{ deck.new_count }}</span>
       </div>
       <form class="inline" hx-post="/decks/{{ deck.id }}/rename" hx-target="#decks" hx-swap="outerHTML">
