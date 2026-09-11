@@ -1,3 +1,3 @@
-# Use FSRS via open-spaced-repetition Rust crates
+# Use FSRS via the `fsrs` crate
 
-We want Anki-compatible modern scheduling, not classic SM-2. Anki ships FSRS; the maintained Rust implementations are from open-spaced-repetition (`fsrs` with optimizer, `rs-fsrs` schedule-only). v1 scheduling state and Ratings must fit FSRS, not an SM-2 ease/interval model.
+We want Anki-compatible modern scheduling, not classic SM-2. v1 uses the maintained `fsrs` crate (open-spaced-repetition/fsrs-rs, FSRS v6) with default parameters; personal parameter optimization can come later. We rejected `rs-fsrs` because it lags on crates.io and tracks older FSRS v5.
