@@ -12,12 +12,17 @@ v1 app and CI are **specified**, not implemented yet. See:
 - [`docs/SPEC-v1.md`](docs/SPEC-v1.md) — accepted v1 product/spec
 - [`docs/SPEC-ci.md`](docs/SPEC-ci.md) — accepted CI spec
 - [`docs/adr/`](docs/adr/) — architecture decisions
+- [`.cursor/skills/do-work/SKILL.md`](.cursor/skills/do-work/SKILL.md) — how Full Stack implements issues / PRs
 
 ## Planned stack
 
 Axum · Askama · HTMX (vendored) · SQLx / SQLite · [`fsrs`](https://crates.io/crates/fsrs)
 
 Workspace (planned): `crates/web`, `crates/domain`, `crates/db`.
+
+## Implementing
+
+Full Stack must follow **do-work**: one child issue per PR, pre-PR cargo/lychee gates, Code Reviewer then Ataias approval, stacking allowed after Code Reviewer approves unless the ticket needs `main`.
 
 ## Run (once implemented)
 
