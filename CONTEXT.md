@@ -1,0 +1,21 @@
+# Flashcards
+
+A single-user Anki-like study app: create cards, review what's due, reschedule by rating.
+
+## Language
+
+**Card**:
+A flashcard with a front (prompt) and a back (answer). v1 is plain text only; markdown is planned for v2 (to be grilled after v1).
+_Avoid_: Note, item, flashcard (as a type name)
+
+**Review**:
+One attempt to recall a Card's back, ending in a Rating that updates scheduling.
+_Avoid_: Study, quiz, attempt (as the noun for this act)
+
+**Rating**:
+The outcome of a Review: Again, Hard, Good, or Easy.
+_Avoid_: Grade, score, button
+
+**Due**:
+A Card is due when its next-review time has arrived or passed; Reviews are drawn from due Cards.
+_Avoid_: Ready, overdue (as the primary term)
