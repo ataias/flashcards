@@ -7,9 +7,9 @@ mod schedule;
 use chrono::{DateTime, Utc};
 
 pub use fsrs::MemoryState;
-pub use queue::{new_cards_introduced_on_local_day, select_study_queue, NEW_CARDS_PER_LOCAL_DAY};
+pub use queue::{NEW_CARDS_PER_LOCAL_DAY, new_cards_introduced_on_local_day, select_study_queue};
 pub use rating::Rating;
-pub use schedule::{schedule, ScheduleError, ScheduledReview, DESIRED_RETENTION};
+pub use schedule::{DESIRED_RETENTION, ScheduleError, ScheduledReview, schedule};
 
 pub type CardId = i64;
 
