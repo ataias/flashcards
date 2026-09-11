@@ -2,9 +2,9 @@ mod config;
 
 pub use config::{Config, ConfigError, DEFAULT_BIND, DEFAULT_DB_PATH};
 
+use axum::Router;
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use tower_http::services::ServeDir;
 
 const INDEX_HTML: &str = r##"<!DOCTYPE html>
@@ -49,7 +49,7 @@ async fn ping() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
