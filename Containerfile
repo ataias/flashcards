@@ -29,6 +29,7 @@ RUN set -eux; \
     curl -fsSL -o /tmp/lychee.tar.gz \
       "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${lychee_arch}.tar.gz"; \
     echo "${lychee_sha256}  /tmp/lychee.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/lychee.tar.gz -C /usr/local/bin; \
-    rm /tmp/lychee.tar.gz; \
+    tar -xzf /tmp/lychee.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/lychee-${lychee_arch}/lychee" /usr/local/bin/lychee; \
+    rm -rf /tmp/lychee.tar.gz "/tmp/lychee-${lychee_arch}"; \
     lychee --version
