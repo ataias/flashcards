@@ -1,0 +1,40 @@
+# Shared lychee config for SPEC-ci markdown docs (lychee 0.24).
+# Include set: README.md, CONTEXT.md, docs/**
+#
+# Workflows load this file automatically from the repo root. Do not re-list
+# excludes, accept codes, retries, or schemes on the CLI.
+#
+#   ci.yml (relative-only; --offline overrides scheme to file://):
+#     lychee --offline -- README.md CONTEXT.md 'docs/**'
+#
+#   links-daily.yml (external http/https; 404 is not accepted):
+#     lychee -- README.md CONTEXT.md 'docs/**'
+
+# --- Display (CI logs) ---
+no_progress = true
+
+# --- Requests ---
+# Default is online/external. ci.yml passes --offline for relative-only.
+offline = false
+# External default. --offline replaces this with file:// only.
+scheme = ["https", "http"]
+method = "get"
+timeout = 20
+retry_wait_time = 2
+max_retries = 3
+max_redirects = 10
+# 404 omitted on purpose so links-daily.yml fails on missing pages.
+# 429 accepted so GitHub/crates.io rate limits do not dominate the daily job.
+accept = ["200..=299", "429"]
+
+# --- Exclusions ---
+include_mail = false
+include_verbatim = false
+include_wikilinks = false
+# Skip RFC1918 / link-local / loopback (e.g. 127.0.0.1) if they appear
+# outside code fences. README's bind example is in a fenced block.
+exclude_all_private = true
+exclude = [
+  '^mailto:',
+]
+extensions = ["md"]
