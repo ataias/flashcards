@@ -1,0 +1,77 @@
+# PR + main gate: fmt, clippy, test, build, relative lychee (SPEC-ci).
+# Toolchain comes from the root Containerfile; app sources are checked out here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# contents: read is the SPEC-ci hygiene baseline. actions: write is required
+# so docker/build-push-action (type=gha) and Swatinem/rust-cache can persist.
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: fmt, clippy, test, build, lychee
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Build CI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          push: false
+          load: true
+          tags: flashcards-ci:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # load + gha cache together need provenance disabled
+          provenance: false
+
+      - name: Run checks in CI image
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.cargo/registry" "${HOME}/.cargo/git"
+          extra_env=()
+          if [ -d .sqlx ]; then
+            extra_env+=(-e SQLX_OFFLINE=true)
+          fi
+          docker run --rm \
+            "${extra_env[@]}" \
+            -e CARGO_TERM_COLOR \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${HOME}/.cargo/registry:/usr/local/cargo/registry" \
+            -v "${HOME}/.cargo/git:/usr/local/cargo/git" \
+            -w /workspace \
+            flashcards-ci:local \
+            /bin/bash --noprofile --norc -euo pipefail -c "$(cat <<'EOS'
+          cargo metadata --format-version=1 --no-deps \
+            | jq -e '[.packages[] | select(.source==null) | .edition] | length > 0 and all(. == "2024")'
+          cargo fmt --check
+          cargo clippy --workspace -- -D warnings
+          cargo test --workspace
+          cargo build --workspace
+          lychee --offline -- README.md CONTEXT.md docs
+          EOS
+          )"

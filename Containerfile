@@ -4,14 +4,15 @@ FROM rust:1.88-bookworm
 
 RUN rustup component add rustfmt clippy
 
-# Native deps for SQLx / SQLite linking.
+# Native deps for SQLx / SQLite linking. jq is the ci.yml edition-2024 gate.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libsqlite3-dev \
         pkg-config \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned lychee; lychee.toml / ci.yml land in later issues.
+# Pinned lychee; workflows load lychee.toml from the checkout.
 ARG LYCHEE_VERSION=0.24.2
 RUN set -eux; \
     arch="$(uname -m)"; \
