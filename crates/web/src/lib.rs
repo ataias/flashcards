@@ -299,6 +299,105 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Card back cannot be empty"));
+        assert!(html.contains(">Q</textarea>"));
+    }
+
+    #[tokio::test]
+    async fn create_card_preserves_draft_on_empty_front() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=+++&back=Paris",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Card front cannot be empty"));
+        assert!(html.contains(">Paris</textarea>"));
+        assert!(html.contains("class=\"create-card\""));
+    }
+
+    #[tokio::test]
+    async fn update_card_rejects_empty_sides_and_preserves_draft() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Q", "A").await.unwrap();
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}", card.id),
+            "front=+++&back=Kept+draft",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Card front cannot be empty"));
+        assert!(html.contains(">Kept draft</textarea>"));
+        assert!(html.contains(">Q</p>"));
+        let stored = db::get_card(&db.pool, card.id).await.unwrap().unwrap();
+        assert_eq!(stored.front, "Q");
+        assert_eq!(stored.back, "A");
+
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}", card.id),
+            "front=Kept+front&back=+++",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Card back cannot be empty"));
+        assert!(html.contains(">Kept front</textarea>"));
+    }
+
+    #[tokio::test]
+    async fn non_htmx_update_and_delete_card_redirect_to_deck() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Q", "A").await.unwrap();
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}", card.id),
+            "front=Q2&back=A2",
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains(">Q2</p>"));
+        assert!(html.contains(">A2</p>"));
+
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}/delete", card.id),
+            "",
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards in this Deck yet"));
+    }
+
+    #[tokio::test]
+    async fn home_counts_new_card_after_create() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            &format!("/decks/{deck_id}/cards"),
+            "front=Q&back=A",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, html) = get(app(db.pool.clone()), "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("due 0"));
+        assert!(html.contains("new 1"));
     }
 
     #[tokio::test]
