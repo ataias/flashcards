@@ -13,7 +13,7 @@ A named collection of Cards. v1 has a default Deck and allows additional named D
 _Avoid_: Folder, set, pile, collection
 
 **Review**:
-One attempt to recall a Card's back, ending in a Rating that updates scheduling.
+One attempt to recall a Card's back: show front, reveal back, then a Rating that updates scheduling. No typed answer in v1.
 _Avoid_: Study, quiz, attempt (as the noun for this act)
 
 **Rating**:
