@@ -8,13 +8,31 @@ async fn main() {
         std::process::exit(1);
     });
 
-    eprintln!("listening on http://{}", config.bind);
-    eprintln!("FLASHCARDS_DB={}", config.db_path.display());
+    let pool = db::open(&config.db_path).await.unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
+    let decks = db::list_decks(&pool).await.unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
 
-    let listener = TcpListener::bind(config.bind)
-        .await
-        .unwrap_or_else(|err| panic!("failed to bind {}: {err}", config.bind));
-    axum::serve(listener, web::app())
-        .await
-        .expect("server error");
+    eprintln!("listening on http://{}", config.bind);
+    eprintln!(
+        "FLASHCARDS_DB={} ({} deck{})",
+        config.db_path.display(),
+        decks.len(),
+        if decks.len() == 1 { "" } else { "s" }
+    );
+
+    let listener = TcpListener::bind(config.bind).await.unwrap_or_else(|err| {
+        eprintln!("failed to bind {}: {err}", config.bind);
+        std::process::exit(1);
+    });
+    let result = axum::serve(listener, web::app()).await;
+    pool.close().await;
+    if let Err(err) = result {
+        eprintln!("server error: {err}");
+        std::process::exit(1);
+    }
 }
