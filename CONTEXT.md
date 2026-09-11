@@ -9,11 +9,11 @@ A flashcard with a front (prompt) and a back (answer). v1 is plain text only; ma
 _Avoid_: Note, item, flashcard (as a type name)
 
 **Deck**:
-A named collection of Cards. On first DB init, a Deck named "Default" is created automatically; additional named Decks are allowed.
+A named collection of Cards. On first DB init, a Deck named "Default" is created automatically; additional named Decks are allowed. If every Deck is deleted, "Default" is recreated immediately so Cards always have a home.
 _Avoid_: Folder, set, pile, collection
 
 **Study**:
-A session of Reviews drawn from one Deck: due Cards plus a daily cap of new Cards (never reviewed; 20/day per Deck in v1).
+A session of Reviews drawn from one Deck: due Cards plus a daily cap of new Cards (never reviewed; 20/day per Deck in v1). The new-card day boundary is local midnight.
 _Avoid_: Study all, quiz mode, session (as the primary noun)
 
 **New Card**:
