@@ -17,9 +17,13 @@ One attempt to recall a Card's back, ending in a Rating that updates scheduling.
 _Avoid_: Study, quiz, attempt (as the noun for this act)
 
 **Rating**:
-The outcome of a Review: Again, Hard, Good, or Easy.
+The outcome of a Review: Again, Hard, Good, or Easy. Mapped into FSRS as the four standard grades.
 _Avoid_: Grade, score, button
 
 **Due**:
 A Card is due when its next-review time has arrived or passed; Reviews are drawn from due Cards.
 _Avoid_: Ready, overdue (as the primary term)
+
+**Scheduler**:
+FSRS (Free Spaced Repetition Scheduler) — the algorithm Anki uses in modern versions. Not SM-2.
+_Avoid_: SM-2, Anki algorithm (ambiguous), SRS (generic)
