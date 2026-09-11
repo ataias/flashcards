@@ -2,7 +2,8 @@
 name: do-work
 description: >-
   Use when implementing any flashcards issue or opening/updating a PR on
-  ataias/flashcards — ticket pick, pre-PR checks, stacking, and review rules.
+  ataias/flashcards — ticket pick, pre-PR checks, stacking, rebase hygiene,
+  and review rules.
 ---
 
 # do-work (ataias/flashcards)
@@ -31,7 +32,7 @@ Mandatory workflow for **Full Stack** on this repo. Run at the **start** of an i
 
 ## 3. Branch
 
-- From up-to-date `main`, or from an approved stacked base when stacking (see §6).
+- From up-to-date `main`, or from an approved stacked base when stacking (see §6–§7).
 - Name: `issue-N-short-slug` (example: `issue-2-workspace-scaffold`).
 - **One child issue ↔ one PR.** No issue work committed straight to `main`. No PR whose only job is an epic parent.
 
@@ -67,16 +68,33 @@ Until CI exists, still require fmt / clippy / test / build.
   - `Fixes #N`
   - **Test plan** (commands you ran)
   - **SPEC/CONTEXT deviations** (or `none`)
+  - Stacking notes when base ≠ `main`
 - Use `.github/PULL_REQUEST_TEMPLATE.md` when present.
 
-## 7. Review and merge rules
+## 7. Stack rebase hygiene
+
+Stacked PRs go stale when `main` (or a lower stack branch) moves. **Check before every new stacked PR and whenever Architect / Ataias asks for a rebase.**
+
+1. Fetch latest remotes.
+2. Identify the stack bottom-up (PR whose base is `main`, then each PR that bases on the previous head).
+3. For each branch from **bottom to tip**:
+   - If it is behind its intended base, **rebase** onto that base (not merge).
+   - Push with `--force-with-lease` only (never bare `--force`).
+4. Keep GitHub PR **base** branches correct after rebases (tip still targets the parent stack branch; bottom targets `main`).
+5. Re-run §5 checks on the tip after the full stack rebase.
+6. If rebase conflicts are non-trivial or change behavior, stop and ping **Architect**.
+
+Do **not** open a fresh PR to “fix” a rebase — update the existing issue branch.
+
+## 8. Review and merge rules
 
 1. Request review from **Code Reviewer**. Do not merge your own PR.
 2. Merge requires **Code Reviewer approval** and **Ataias approval**.
 3. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
 4. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
+5. Before stacking a new PR, run §7 (rebase) so you are not building on a stale base.
 
-## 8. Done
+## 9. Done
 
 - PR merged (by Ataias after approvals) closes the issue via `Fixes #N`.
 - Only then is the child issue complete.
