@@ -9,7 +9,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 pub use sqlx::SqlitePool;
 
-/// Deck name created when the database has zero Decks.
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -20,7 +19,6 @@ pub struct Deck {
     pub name: String,
 }
 
-/// A Deck plus Study-queue due/new counts for the local calendar day.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeckSummary {
     pub deck: Deck,
@@ -252,7 +250,6 @@ fn normalize_deck_name(name: &str) -> Result<String, Error> {
     }
 }
 
-/// Deck list with due/new counts from [`study_queue`] (SPEC home page).
 pub async fn list_deck_summaries<Tz: TimeZone>(
     pool: &SqlitePool,
     now_local: DateTime<Tz>,
@@ -386,8 +383,6 @@ async fn apply_review_on(
     Ok(())
 }
 
-/// Schedule a Rating with FSRS, then persist the Card and Review log.
-///
 /// Re-fetches the Card inside the write transaction so `schedule` uses the
 /// row being updated, not a possibly stale caller-held copy (#18 should-fix).
 pub async fn rate_card(

@@ -7,7 +7,6 @@ pub enum Rating {
 }
 
 impl Rating {
-    /// FSRS four standard grades: 1=Again, 2=Hard, 3=Good, 4=Easy.
     pub fn as_grade(self) -> i64 {
         self as i64
     }
