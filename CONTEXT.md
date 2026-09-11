@@ -25,5 +25,5 @@ A Card is due when its next-review time has arrived or passed; Reviews are drawn
 _Avoid_: Ready, overdue (as the primary term)
 
 **Scheduler**:
-FSRS (Free Spaced Repetition Scheduler) — the algorithm Anki uses in modern versions. Not SM-2.
-_Avoid_: SM-2, Anki algorithm (ambiguous), SRS (generic)
+FSRS (Free Spaced Repetition Scheduler) via the `fsrs` crate (FSRS v6, default parameters in v1). Not SM-2; not the lighter `rs-fsrs` crate.
+_Avoid_: SM-2, Anki algorithm (ambiguous), SRS (generic), rs-fsrs
