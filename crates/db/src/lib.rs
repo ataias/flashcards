@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
+use domain::{Card, Rating, ScheduleError, ScheduledReview};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{SqlitePool, migrate::Migrator};
 
@@ -24,6 +26,14 @@ pub enum Error {
     },
     Sqlx(sqlx::Error),
     Migrate(sqlx::migrate::MigrateError),
+    Schedule(ScheduleError),
+    InvalidTimestamp {
+        value: String,
+        source: chrono::ParseError,
+    },
+    IncompleteFsrs {
+        card_id: i64,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -38,6 +48,16 @@ impl std::fmt::Display for Error {
             }
             Self::Sqlx(err) => write!(f, "database error: {err}"),
             Self::Migrate(err) => write!(f, "database migration failed: {err}"),
+            Self::Schedule(err) => write!(f, "{err}"),
+            Self::InvalidTimestamp { value, source } => {
+                write!(f, "invalid timestamp `{value}`: {source}")
+            }
+            Self::IncompleteFsrs { card_id } => {
+                write!(
+                    f,
+                    "card {card_id} has incomplete FSRS fields (New Card requires all NULL)"
+                )
+            }
         }
     }
 }
@@ -48,6 +68,9 @@ impl std::error::Error for Error {
             Self::CreateParent { source, .. } => Some(source),
             Self::Sqlx(err) => Some(err),
             Self::Migrate(err) => Some(err),
+            Self::Schedule(err) => Some(err),
+            Self::InvalidTimestamp { source, .. } => Some(source),
+            Self::IncompleteFsrs { .. } => None,
         }
     }
 }
@@ -61,6 +84,12 @@ impl From<sqlx::Error> for Error {
 impl From<sqlx::migrate::MigrateError> for Error {
     fn from(err: sqlx::migrate::MigrateError) -> Self {
         Self::Migrate(err)
+    }
+}
+
+impl From<ScheduleError> for Error {
+    fn from(err: ScheduleError) -> Self {
+        Self::Schedule(err)
     }
 }
 
@@ -92,27 +121,64 @@ async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, Error> {
 }
 
 /// Insert Deck named `Default` when zero Decks remain.
+///
+/// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent `open`
+/// cannot both observe an empty table and insert a second Default.
 pub async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+    let result = seed_default_if_empty(&mut conn).await;
+    finish_immediate(conn, result).await
+}
+
+/// Delete a Deck (Cards and Review logs cascade) and recreate `Default` if none remain.
+pub async fn delete_deck(pool: &SqlitePool, deck_id: i64) -> Result<(), Error> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+    let result = delete_deck_on(&mut conn, deck_id).await;
+    finish_immediate(conn, result).await
+}
+
+async fn delete_deck_on(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    deck_id: i64,
+) -> Result<(), Error> {
+    sqlx::query("DELETE FROM decks WHERE id = ?")
+        .bind(deck_id)
+        .execute(&mut **conn)
+        .await?;
+    seed_default_if_empty(conn).await
+}
+
+async fn seed_default_if_empty(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+) -> Result<(), Error> {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM decks")
-        .fetch_one(pool)
+        .fetch_one(&mut **conn)
         .await?;
     if n == 0 {
         sqlx::query("INSERT INTO decks (name) VALUES (?)")
             .bind(DEFAULT_DECK_NAME)
-            .execute(pool)
+            .execute(&mut **conn)
             .await?;
     }
     Ok(())
 }
 
-/// Delete a Deck (Cards and Review logs cascade) and recreate `Default` if none remain.
-pub async fn delete_deck(pool: &SqlitePool, deck_id: i64) -> Result<(), Error> {
-    sqlx::query("DELETE FROM decks WHERE id = ?")
-        .bind(deck_id)
-        .execute(pool)
-        .await?;
-    ensure_default_deck(pool).await?;
-    Ok(())
+async fn finish_immediate<T>(
+    mut conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    result: Result<T, Error>,
+) -> Result<T, Error> {
+    match result {
+        Ok(value) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            Ok(value)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
 }
 
 pub async fn list_decks(pool: &SqlitePool) -> Result<Vec<Deck>, Error> {
@@ -125,9 +191,162 @@ pub async fn list_decks(pool: &SqlitePool) -> Result<Vec<Deck>, Error> {
         .collect())
 }
 
+type CardRow = (
+    i64,
+    i64,
+    String,
+    String,
+    Option<f64>,
+    Option<f64>,
+    Option<String>,
+    Option<String>,
+);
+
+pub async fn get_card(pool: &SqlitePool, card_id: i64) -> Result<Option<Card>, Error> {
+    let row = sqlx::query_as::<_, CardRow>(
+        "SELECT id, deck_id, front, back, stability, difficulty, due, last_review
+         FROM cards WHERE id = ?",
+    )
+    .bind(card_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(card_from_row).transpose()
+}
+
+pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<Card>, Error> {
+    let rows = sqlx::query_as::<_, CardRow>(
+        "SELECT id, deck_id, front, back, stability, difficulty, due, last_review
+         FROM cards WHERE deck_id = ? ORDER BY id",
+    )
+    .bind(deck_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(card_from_row).collect()
+}
+
+/// First Review instant per Card in the Deck (UTC), for the local-day new-card cap.
+pub async fn first_review_times(
+    pool: &SqlitePool,
+    deck_id: i64,
+) -> Result<Vec<DateTime<Utc>>, Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT MIN(review_logs.rated_at)
+         FROM review_logs
+         INNER JOIN cards ON cards.id = review_logs.card_id
+         WHERE cards.deck_id = ?
+         GROUP BY review_logs.card_id",
+    )
+    .bind(deck_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(|(value,)| parse_utc(&value)).collect()
+}
+
+/// Study queue: due Cards plus New Cards up to the local-day cap.
+pub async fn study_queue<Tz: TimeZone>(
+    pool: &SqlitePool,
+    deck_id: i64,
+    now_local: DateTime<Tz>,
+) -> Result<Vec<Card>, Error> {
+    let cards = list_cards_in_deck(pool, deck_id).await?;
+    let first_reviews = first_review_times(pool, deck_id).await?;
+    let tz = now_local.timezone();
+    let first_local: Vec<_> = first_reviews
+        .into_iter()
+        .map(|instant| instant.with_timezone(&tz))
+        .collect();
+    Ok(domain::select_study_queue(&cards, &first_local, now_local))
+}
+
+/// Persist FSRS memory state + due and append a Review log in one transaction.
+pub async fn apply_review(
+    pool: &SqlitePool,
+    card_id: i64,
+    scheduled: &ScheduledReview,
+    rating: Rating,
+) -> Result<(), Error> {
+    let mut tx = pool.begin().await?;
+    let due = rfc3339(scheduled.due);
+    let last_review = rfc3339(scheduled.last_review);
+    sqlx::query(
+        "UPDATE cards
+         SET stability = ?, difficulty = ?, due = ?, last_review = ?
+         WHERE id = ?",
+    )
+    .bind(scheduled.memory.stability)
+    .bind(scheduled.memory.difficulty)
+    .bind(&due)
+    .bind(&last_review)
+    .bind(card_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO review_logs (card_id, rated_at, rating) VALUES (?, ?, ?)")
+        .bind(card_id)
+        .bind(&last_review)
+        .bind(rating.as_grade())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Schedule a Rating with FSRS, then persist the Card and Review log.
+pub async fn rate_card(
+    pool: &SqlitePool,
+    card: &Card,
+    rating: Rating,
+    now: DateTime<Utc>,
+) -> Result<ScheduledReview, Error> {
+    let scheduled = domain::schedule(card.memory, card.last_review, rating, now)?;
+    apply_review(pool, card.id, &scheduled, rating).await?;
+    Ok(scheduled)
+}
+
+fn rfc3339(instant: DateTime<Utc>) -> String {
+    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn parse_utc(value: &str) -> Result<DateTime<Utc>, Error> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|parsed| parsed.with_timezone(&Utc))
+        .map_err(|source| Error::InvalidTimestamp {
+            value: value.to_string(),
+            source,
+        })
+}
+
+fn card_from_row(row: CardRow) -> Result<Card, Error> {
+    let (id, deck_id, front, back, stability, difficulty, due, last_review) = row;
+    let memory = match (stability, difficulty) {
+        (None, None) => None,
+        (Some(stability), Some(difficulty)) => Some(domain::MemoryState {
+            stability: stability as f32,
+            difficulty: difficulty as f32,
+        }),
+        _ => return Err(Error::IncompleteFsrs { card_id: id }),
+    };
+    let due = due.as_deref().map(parse_utc).transpose()?;
+    let last_review = last_review.as_deref().map(parse_utc).transpose()?;
+    match (&memory, &due, &last_review) {
+        (None, None, None) | (Some(_), Some(_), Some(_)) => {}
+        _ => return Err(Error::IncompleteFsrs { card_id: id }),
+    }
+    Ok(Card {
+        id,
+        deck_id,
+        front,
+        back,
+        memory,
+        due,
+        last_review,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use domain::{Card, Rating};
     use sqlx::sqlite::SqliteConnectOptions;
 
     async fn open_memory() -> SqlitePool {
@@ -303,5 +522,86 @@ mod tests {
         let decks = list_decks(&pool).await.unwrap();
         assert_eq!(decks.len(), 1);
         assert_eq!(decks[0].id, other_id);
+    }
+
+    #[tokio::test]
+    async fn rate_card_updates_memory_due_and_appends_review_log() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let card_id = insert_card(&pool, deck_id).await;
+        let card = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert!(card.is_new());
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let scheduled = rate_card(&pool, &card, Rating::Good, now).await.unwrap();
+
+        let updated = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert!(!updated.is_new());
+        assert_eq!(updated.memory, Some(scheduled.memory));
+        assert_eq!(updated.due, Some(scheduled.due));
+        assert_eq!(updated.last_review, Some(now));
+        assert_eq!(count(&pool, "review_logs").await, 1);
+    }
+
+    #[tokio::test]
+    async fn half_written_fsrs_row_is_rejected() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let err = sqlx::query(
+            "INSERT INTO cards (deck_id, front, back, stability) VALUES (?, 'f', 'b', 1.2)",
+        )
+        .bind(deck_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("CHECK") || msg.contains("constraint"),
+            "expected CHECK failure, got {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn due_without_last_review_is_rejected() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let err = sqlx::query(
+            "INSERT INTO cards (deck_id, front, back, due) VALUES (?, 'f', 'b', '2026-09-11T00:00:00Z')",
+        )
+        .bind(deck_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("CHECK") || msg.contains("constraint"),
+            "expected CHECK failure, got {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn study_queue_empty_when_deck_has_no_cards() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let now = chrono::FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2026, 9, 11, 12, 0, 0)
+            .unwrap();
+        let queue = study_queue(&pool, deck_id, now).await.unwrap();
+        assert!(queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn study_queue_caps_new_cards_on_local_day() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        for _ in 0..25 {
+            insert_card(&pool, deck_id).await;
+        }
+        let tz = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let queue = study_queue(&pool, deck_id, now).await.unwrap();
+        assert_eq!(queue.len(), domain::NEW_CARDS_PER_LOCAL_DAY);
+        assert!(queue.iter().all(Card::is_new));
     }
 }
