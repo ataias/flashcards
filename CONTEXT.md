@@ -1,6 +1,6 @@
 # Flashcards
 
-A single-user Anki-like study app: create cards, review what's due, reschedule by rating.
+A single-user Anki-like study app: create cards, review what's due, reschedule by rating. v1 stores everything in a local SQLite file.
 
 ## Language
 
