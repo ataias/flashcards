@@ -1,14 +1,16 @@
 # Shared lychee config for SPEC-ci markdown docs (lychee 0.24).
-# Include set: README.md, CONTEXT.md, docs/**
+# Include set: README.md, CONTEXT.md, docs/** — pass the `docs` directory
+# (lychee 0.24 does not expand a literal `docs/**` glob; `extensions` keeps
+# the walk to markdown).
 #
 # Workflows load this file automatically from the repo root. Do not re-list
 # excludes, accept codes, retries, or schemes on the CLI.
 #
 #   ci.yml (relative-only; --offline overrides scheme to file://):
-#     lychee --offline -- README.md CONTEXT.md 'docs/**'
+#     lychee --offline -- README.md CONTEXT.md docs
 #
 #   links-daily.yml (external http/https; 404 is not accepted):
-#     lychee -- README.md CONTEXT.md 'docs/**'
+#     lychee -- README.md CONTEXT.md docs
 
 # --- Display (CI logs) ---
 no_progress = true
