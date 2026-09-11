@@ -112,6 +112,27 @@ mod tests {
     }
 
     #[test]
+    fn again_interval_is_at_least_one_day() {
+        let now = noon();
+        let new_card = schedule(None, None, Rating::Again, now).unwrap();
+        assert!(new_card.due >= now + Duration::days(1));
+
+        // Short stability / high difficulty can produce a sub-day FSRS interval;
+        // v1 still floors Again to a whole day.
+        let reviewed = schedule(
+            Some(MemoryState {
+                stability: 0.1,
+                difficulty: 10.0,
+            }),
+            Some(now - Duration::days(1)),
+            Rating::Again,
+            now,
+        )
+        .unwrap();
+        assert!(reviewed.due >= now + Duration::days(1));
+    }
+
+    #[test]
     fn elapsed_days_since_last_review_used_for_next_due() {
         let last = Utc.with_ymd_and_hms(2026, 9, 1, 12, 0, 0).unwrap();
         let now = noon();

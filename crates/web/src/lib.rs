@@ -495,7 +495,7 @@ mod tests {
     async fn study_shows_front_hides_back() {
         let db = test_db().await;
         let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
-        db::create_card(&db.pool, deck_id, "Capital of France", "Paris")
+        let card = db::create_card(&db.pool, deck_id, "Capital of France", "Paris")
             .await
             .unwrap();
         let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}/study")).await;
@@ -503,7 +503,8 @@ mod tests {
         assert!(html.contains("Capital of France"));
         assert!(!html.contains("Paris"));
         assert!(html.contains("Show answer"));
-        assert!(html.contains("/reveal"));
+        assert!(html.contains(r#"method="post""#));
+        assert!(html.contains(&format!(r#"action="/cards/{}/reveal""#, card.id)));
         assert!(!html.contains("Again"));
     }
 
@@ -529,7 +530,8 @@ mod tests {
         assert!(html.contains("Hard"));
         assert!(html.contains("Good"));
         assert!(html.contains("Easy"));
-        assert!(html.contains("/rate"));
+        assert!(html.contains(r#"method="post""#));
+        assert!(html.contains(&format!(r#"action="/cards/{}/rate""#, card.id)));
     }
 
     #[tokio::test]
@@ -633,6 +635,30 @@ mod tests {
         let stored = db::get_card(&db.pool, card.id).await.unwrap().unwrap();
         assert!(!stored.is_new());
         assert!(stored.due.unwrap() > chrono::Utc::now());
+    }
+
+    #[tokio::test]
+    async fn study_stays_inside_the_requested_deck() {
+        let db = test_db().await;
+        let pool = &db.pool;
+        let default_id = db::list_decks(pool).await.unwrap()[0].id;
+        let other = db::create_deck(pool, "Spanish").await.unwrap();
+        db::create_card(pool, default_id, "Default front", "Default back")
+            .await
+            .unwrap();
+        db::create_card(pool, other.id, "Spanish front", "Spanish back")
+            .await
+            .unwrap();
+
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{default_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Default front"));
+        assert!(!html.contains("Spanish front"));
+
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{}/study", other.id)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Spanish front"));
+        assert!(!html.contains("Default front"));
     }
 
     #[tokio::test]
