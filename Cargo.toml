@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/web", "crates/domain", "crates/db"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+# Edition 2024 requires rustc ≥ 1.85. Pin 1.88 so the later FSRS layer
+# (if-let chains) builds on the same toolchain.
+rust-version = "1.88"
