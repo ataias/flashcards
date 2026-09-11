@@ -46,7 +46,7 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, String::from_utf8(bytes).unwrap())
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
     async fn get(app: Router, path: &str) -> (StatusCode, String) {
