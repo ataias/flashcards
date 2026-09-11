@@ -9,7 +9,7 @@ A flashcard with a front (prompt) and a back (answer). v1 is plain text only; ma
 _Avoid_: Note, item, flashcard (as a type name)
 
 **Deck**:
-A named collection of Cards. v1 has a default Deck and allows additional named Decks.
+A named collection of Cards. On first DB init, a Deck named "Default" is created automatically; additional named Decks are allowed.
 _Avoid_: Folder, set, pile, collection
 
 **Study**:
