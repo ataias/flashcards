@@ -5,7 +5,7 @@ A single-user Anki-like study app: create cards, review what's due, reschedule b
 ## Language
 
 **Card**:
-A flashcard with a front (prompt) and a back (answer). v1 is plain text only; markdown is planned for v2 (to be grilled after v1).
+A flashcard with a front (prompt) and a back (answer). v1 is plain text only; markdown is planned for v2 (to be grilled after v1). Each Card carries FSRS memory state and its next due time.
 _Avoid_: Note, item, flashcard (as a type name)
 
 **Deck**:
@@ -23,6 +23,10 @@ _Avoid_: Unseen, unseen card, freshman
 **Review**:
 One attempt to recall a Card's back: show front, reveal back, then a Rating that updates scheduling. No typed answer in v1.
 _Avoid_: Study, quiz, attempt (as the noun for this act)
+
+**Review log**:
+An append-only record of a Review (card, timestamp, rating) kept for history and future FSRS parameter optimization.
+_Avoid_: History entry, audit row
 
 **Rating**:
 The outcome of a Review: Again, Hard, Good, or Easy. Mapped into FSRS as the four standard grades.
