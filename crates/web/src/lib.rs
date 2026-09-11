@@ -349,8 +349,8 @@ mod tests {
         let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(!html.contains("<script>alert(1)</script>"));
-        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
-        assert!(html.contains("a&amp;b"));
+        assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
+        assert!(html.contains("a&#38;b"));
     }
 
     #[tokio::test]
