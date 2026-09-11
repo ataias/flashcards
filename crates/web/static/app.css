@@ -1,0 +1,15 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 2rem auto;
+  max-width: 40rem;
+  line-height: 1.5;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.8rem;
+}
