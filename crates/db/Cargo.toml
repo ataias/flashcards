@@ -3,3 +3,14 @@ name = "db"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "macros",
+    "migrate",
+    "runtime-tokio",
+    "sqlite",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

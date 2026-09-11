@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 axum = "0.8"
+db = { path = "../db" }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 tower-http = { version = "0.6", features = ["fs"] }
 

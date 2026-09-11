@@ -53,39 +53,47 @@ impl std::error::Error for ConfigError {
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let config = Self::parse(
-            env::var("FLASHCARDS_BIND").ok(),
-            env::var("FLASHCARDS_DB").ok(),
+            env_nonempty("FLASHCARDS_BIND"),
+            env_nonempty("FLASHCARDS_DB"),
         )?;
         config.ensure_db_parent()?;
         Ok(config)
     }
 
+    /// Empty strings are treated as unset so `Ok("")` from the environment
+    /// falls back to the defaults.
     pub fn parse(
         bind: Option<impl AsRef<str>>,
         db_path: Option<impl AsRef<str>>,
     ) -> Result<Self, ConfigError> {
-        let bind_raw = bind
-            .as_ref()
-            .map(AsRef::as_ref)
-            .unwrap_or(DEFAULT_BIND)
-            .to_string();
+        let bind_raw = nonempty_or(bind.as_ref().map(AsRef::as_ref), DEFAULT_BIND).to_string();
         let bind = bind_raw
             .parse()
             .map_err(|source| ConfigError::InvalidBind {
                 value: bind_raw,
                 source,
             })?;
-        let db_path = PathBuf::from(
-            db_path
-                .as_ref()
-                .map(AsRef::as_ref)
-                .unwrap_or(DEFAULT_DB_PATH),
-        );
+        let db_path = PathBuf::from(nonempty_or(
+            db_path.as_ref().map(AsRef::as_ref),
+            DEFAULT_DB_PATH,
+        ));
         Ok(Self { bind, db_path })
     }
 
     pub fn ensure_db_parent(&self) -> Result<(), ConfigError> {
         ensure_parent_dir(&self.db_path)
+    }
+}
+
+/// `env::var` yields `Ok("")` when the variable is set but empty; treat that as unset.
+fn env_nonempty(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn nonempty_or<'a>(value: Option<&'a str>, default: &'a str) -> &'a str {
+    match value {
+        Some(value) if !value.is_empty() => value,
+        _ => default,
     }
 }
 
@@ -115,6 +123,13 @@ mod tests {
         let config = Config::parse(Some("0.0.0.0:4000"), Some("/tmp/custom.db")).unwrap();
         assert_eq!(config.bind, "0.0.0.0:4000".parse().unwrap());
         assert_eq!(config.db_path, PathBuf::from("/tmp/custom.db"));
+    }
+
+    #[test]
+    fn empty_bind_and_db_use_defaults() {
+        let config = Config::parse(Some(""), Some("")).unwrap();
+        assert_eq!(config.bind, "127.0.0.1:3000".parse().unwrap());
+        assert_eq!(config.db_path, PathBuf::from("./data/flashcards.db"));
     }
 
     #[test]
