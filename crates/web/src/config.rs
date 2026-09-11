@@ -2,10 +2,8 @@ use std::env;
 use std::net::{AddrParseError, SocketAddr};
 use std::path::{Path, PathBuf};
 
-/// Default listen address from SPEC-v1.
 pub const DEFAULT_BIND: &str = "127.0.0.1:3000";
 
-/// Default SQLite path from SPEC-v1. The file is not opened here (issue #4).
 pub const DEFAULT_DB_PATH: &str = "./data/flashcards.db";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +51,6 @@ impl std::error::Error for ConfigError {
 }
 
 impl Config {
-    /// Parse `FLASHCARDS_BIND` / `FLASHCARDS_DB` and create the DB parent directory.
     pub fn from_env() -> Result<Self, ConfigError> {
         let config = Self::parse(
             env::var("FLASHCARDS_BIND").ok(),
@@ -63,7 +60,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Parse bind/DB values without touching the filesystem.
     pub fn parse(
         bind: Option<impl AsRef<str>>,
         db_path: Option<impl AsRef<str>>,
@@ -88,7 +84,6 @@ impl Config {
         Ok(Self { bind, db_path })
     }
 
-    /// Create the parent directory of `db_path` when it is missing.
     pub fn ensure_db_parent(&self) -> Result<(), ConfigError> {
         ensure_parent_dir(&self.db_path)
     }
