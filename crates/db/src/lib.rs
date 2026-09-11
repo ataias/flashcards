@@ -283,12 +283,12 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
     .await?;
 
     let tz = now_local.timezone();
-    let mut introduced_today: HashMap<i64, usize> = HashMap::new();
+    let mut firsts_by_deck: HashMap<i64, Vec<DateTime<Tz>>> = HashMap::new();
     for (deck_id, rated_at) in firsts {
-        let instant = parse_utc(&rated_at)?.with_timezone(&tz);
-        if instant.date_naive() == now_local.date_naive() {
-            *introduced_today.entry(deck_id).or_default() += 1;
-        }
+        firsts_by_deck
+            .entry(deck_id)
+            .or_default()
+            .push(parse_utc(&rated_at)?.with_timezone(&tz));
     }
 
     let mut order = Vec::new();
@@ -306,7 +306,7 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
             (None, _, _) => {}
             (Some(_), None, _) => summary.new_count += 1,
             (Some(_), Some(_), Some(due)) => {
-                if parse_utc(&due)? <= now_utc {
+                if domain::is_due_at(parse_utc(&due)?, now_utc) {
                     summary.due_count += 1;
                 }
             }
@@ -314,16 +314,17 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
         }
     }
 
-    Ok(order
-        .into_iter()
-        .map(|id| {
-            let mut summary = by_deck.remove(&id).expect("deck id from scan");
-            let remaining = domain::NEW_CARDS_PER_LOCAL_DAY
-                .saturating_sub(introduced_today.get(&id).copied().unwrap_or(0));
-            summary.new_count = summary.new_count.min(remaining);
-            summary
-        })
-        .collect())
+    let mut summaries = Vec::with_capacity(order.len());
+    for id in order {
+        let Some(mut summary) = by_deck.remove(&id) else {
+            continue;
+        };
+        let firsts = firsts_by_deck.get(&id).map(Vec::as_slice).unwrap_or(&[]);
+        summary.new_count =
+            domain::capped_new_count_for_local_day(summary.new_count, firsts, &now_local);
+        summaries.push(summary);
+    }
+    Ok(summaries)
 }
 
 type CardRow = (
@@ -364,6 +365,30 @@ pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<C
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(card_from_row).collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardText {
+    pub id: i64,
+    pub front: String,
+    pub back: String,
+}
+
+/// Front/back list for a Deck page (no FSRS columns).
+pub async fn list_card_text_in_deck(
+    pool: &SqlitePool,
+    deck_id: i64,
+) -> Result<Vec<CardText>, Error> {
+    let rows = sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT id, front, back FROM cards WHERE deck_id = ? ORDER BY id",
+    )
+    .bind(deck_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, front, back)| CardText { id, front, back })
+        .collect())
 }
 
 /// Create a New Card. Front/back are trimmed; empty sides are rejected.
@@ -420,15 +445,12 @@ pub async fn update_card(
         .ok_or(Error::CardNotFound { card_id })
 }
 
-pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<(), Error> {
-    let result = sqlx::query("DELETE FROM cards WHERE id = ?")
+pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<i64, Error> {
+    sqlx::query_scalar("DELETE FROM cards WHERE id = ? RETURNING deck_id")
         .bind(card_id)
-        .execute(pool)
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(Error::CardNotFound { card_id });
-    }
-    Ok(())
+        .fetch_optional(pool)
+        .await?
+        .ok_or(Error::CardNotFound { card_id })
 }
 
 fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
@@ -932,13 +954,19 @@ mod tests {
         assert_eq!(created.front, "Q");
         assert_eq!(created.back, "A");
         assert!(created.is_new());
+        let listed = list_card_text_in_deck(&pool, deck_id).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, created.id);
+        assert_eq!(listed[0].front, "Q");
+        assert_eq!(listed[0].back, "A");
 
         let updated = update_card(&pool, created.id, "Q2", "A2").await.unwrap();
         assert_eq!(updated.front, "Q2");
         assert_eq!(updated.back, "A2");
         assert!(updated.is_new());
 
-        delete_card(&pool, created.id).await.unwrap();
+        let deleted_deck_id = delete_card(&pool, created.id).await.unwrap();
+        assert_eq!(deleted_deck_id, deck_id);
         assert!(get_card(&pool, created.id).await.unwrap().is_none());
     }
 

@@ -6,11 +6,11 @@
   <form class="create-card" hx-post="/decks/{{ deck_id }}/cards" hx-target="#cards" hx-swap="outerHTML">
     <label>
       Front
-      <textarea name="front" required rows="3" placeholder="Prompt" autocomplete="off"></textarea>
+      <textarea name="front" required rows="3" placeholder="Prompt" autocomplete="off">{{ draft.create_front() }}</textarea>
     </label>
     <label>
       Back
-      <textarea name="back" required rows="3" placeholder="Answer" autocomplete="off"></textarea>
+      <textarea name="back" required rows="3" placeholder="Answer" autocomplete="off">{{ draft.create_back() }}</textarea>
     </label>
     <button type="submit">Create Card</button>
   </form>
@@ -29,11 +29,11 @@
       <form class="edit-card" hx-post="/cards/{{ card.id }}" hx-target="#cards" hx-swap="outerHTML">
         <label>
           <span class="visually-hidden">Front</span>
-          <textarea name="front" required rows="2" autocomplete="off">{{ card.front }}</textarea>
+          <textarea name="front" required rows="2" autocomplete="off">{{ card.form_front(draft) }}</textarea>
         </label>
         <label>
           <span class="visually-hidden">Back</span>
-          <textarea name="back" required rows="2" autocomplete="off">{{ card.back }}</textarea>
+          <textarea name="back" required rows="2" autocomplete="off">{{ card.form_back(draft) }}</textarea>
         </label>
         <button type="submit">Save</button>
       </form>

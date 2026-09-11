@@ -7,7 +7,10 @@ mod schedule;
 use chrono::{DateTime, Utc};
 
 pub use fsrs::MemoryState;
-pub use queue::{NEW_CARDS_PER_LOCAL_DAY, new_cards_introduced_on_local_day, select_study_queue};
+pub use queue::{
+    NEW_CARDS_PER_LOCAL_DAY, apply_daily_new_cap, capped_new_count_for_local_day, is_due_at,
+    new_cards_introduced_on_local_day, remaining_new_card_slots, select_study_queue,
+};
 pub use rating::Rating;
 pub use schedule::{DESIRED_RETENTION, ScheduleError, ScheduledReview, schedule};
 
