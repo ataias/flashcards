@@ -8,14 +8,14 @@
     <p class="card-front">{{ card.front }}</p>
     {% if revealed %}
     <p class="card-back">{{ card.back }}</p>
-    <form class="ratings" hx-post="/cards/{{ card.id }}/rate" hx-target="#study" hx-swap="outerHTML">
+    <form class="ratings" method="post" action="/cards/{{ card.id }}/rate" hx-post="/cards/{{ card.id }}/rate" hx-target="#study" hx-swap="outerHTML">
       <button type="submit" name="rating" value="1">Again</button>
       <button type="submit" name="rating" value="2">Hard</button>
       <button type="submit" name="rating" value="3">Good</button>
       <button type="submit" name="rating" value="4">Easy</button>
     </form>
     {% else %}
-    <form hx-post="/cards/{{ card.id }}/reveal" hx-target="#study" hx-swap="outerHTML">
+    <form method="post" action="/cards/{{ card.id }}/reveal" hx-post="/cards/{{ card.id }}/reveal" hx-target="#study" hx-swap="outerHTML">
       <button type="submit">Show answer</button>
     </form>
     {% endif %}
