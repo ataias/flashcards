@@ -1,0 +1,82 @@
+---
+name: do-work
+description: >-
+  Use when implementing any flashcards issue or opening/updating a PR on
+  ataias/flashcards — ticket pick, pre-PR checks, stacking, and review rules.
+---
+
+# do-work (ataias/flashcards)
+
+Mandatory workflow for **Full Stack** on this repo. Run at the **start** of an implementation task and again **before opening or updating a PR**.
+
+## 1. Pick work
+
+1. Choose **one open child issue** (not parent epics such as #1 or #10).
+2. Skip issues whose **Blocked by** is unmet; do the blocker first.
+3. Require these sections in the issue body — if any are missing, **comment and stop** (do not invent scope):
+   - **Goal**
+   - **Where to start**
+   - **Work**
+   - **Done when**
+   - **Refs**
+   - **Blocked by**
+4. If the issue is fuzzy or conflicts with docs, ping **Architect** / Ataias — do not enlarge the ticket.
+
+## 2. Read before coding
+
+1. The issue body end-to-end.
+2. [`CONTEXT.md`](../../../CONTEXT.md)
+3. Every SPEC/ADR linked under **Refs** (typically [`docs/SPEC-v1.md`](../../../docs/SPEC-v1.md), [`docs/SPEC-ci.md`](../../../docs/SPEC-ci.md), [`docs/adr/`](../../../docs/adr/)).
+4. If code and docs disagree: **stop and ask**. Do not “fix” docs in the same PR unless the issue says to.
+
+## 3. Branch
+
+- From up-to-date `main`, or from an approved stacked base when stacking (see §6).
+- Name: `issue-N-short-slug` (example: `issue-2-workspace-scaffold`).
+- **One child issue ↔ one PR.** No issue work committed straight to `main`. No PR whose only job is an epic parent.
+
+## 4. Implement
+
+- Stay inside **Work** / **Done when**.
+- Prefer small, reviewable commits.
+- Match house style already in the repo; follow CONTEXT vocabulary.
+
+## 5. Before opening (or pushing to) the PR
+
+All must pass locally:
+
+```bash
+cargo fmt
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+cargo build --workspace
+```
+
+When `lychee.toml` / CI exist, also run **relative-only** lychee the same way `ci.yml` does.
+
+If SQL queries changed: regenerate `.sqlx/` and **commit** it (`SQLX_OFFLINE=true` in CI).
+
+Until CI exists, still require fmt / clippy / test / build.
+
+## 6. Open the PR
+
+- Base: `main` (or the stacked parent branch when stacking).
+- Title: clear and scoped to the issue.
+- Body must include:
+  - Summary of what changed
+  - `Fixes #N`
+  - **Test plan** (commands you ran)
+  - **SPEC/CONTEXT deviations** (or `none`)
+- Use `.github/PULL_REQUEST_TEMPLATE.md` when present.
+
+## 7. Review and merge rules
+
+1. Request review from **Code Reviewer**. Do not merge your own PR.
+2. Merge requires **Code Reviewer approval** and **Ataias approval**.
+3. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
+4. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
+
+## 8. Done
+
+- PR merged (by Ataias after approvals) closes the issue via `Fixes #N`.
+- Only then is the child issue complete.

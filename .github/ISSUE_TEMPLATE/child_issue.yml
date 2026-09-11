@@ -1,0 +1,52 @@
+---
+name: Child issue
+description: Implementable ticket (required sections for do-work)
+title: ""
+labels: []
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One paragraph on what this ticket achieves.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where to start
+      description: Paths, crates, or "create X" so Full Stack can begin without guessing.
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work
+      description: Bullet list of concrete tasks.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Acceptance checks.
+    validations:
+      required: true
+  - type: textarea
+    id: refs
+    attributes:
+      label: Refs
+      description: Links to CONTEXT, SPEC-v1, SPEC-ci, ADRs.
+      value: |
+        - https://github.com/ataias/flashcards/blob/main/CONTEXT.md
+        - https://github.com/ataias/flashcards/blob/main/docs/SPEC-v1.md
+    validations:
+      required: true
+  - type: input
+    id: blocked
+    attributes:
+      label: Blocked by
+      description: Issue numbers or "none".
+      placeholder: none
+    validations:
+      required: true
