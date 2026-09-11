@@ -13,8 +13,12 @@ A named collection of Cards. v1 has a default Deck and allows additional named D
 _Avoid_: Folder, set, pile, collection
 
 **Study**:
-A session of Reviews drawn from one Deck (due Cards from that Deck only in v1).
+A session of Reviews drawn from one Deck: due Cards plus a daily cap of new Cards (never reviewed; 20/day per Deck in v1).
 _Avoid_: Study all, quiz mode, session (as the primary noun)
+
+**New Card**:
+A Card that has never been Reviewed. Enters Study under the Deck’s daily new cap.
+_Avoid_: Unseen, unseen card, freshman
 
 **Review**:
 One attempt to recall a Card's back: show front, reveal back, then a Rating that updates scheduling. No typed answer in v1.
