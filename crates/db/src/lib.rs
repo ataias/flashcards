@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{migrate::Migrator, SqlitePool};
+use sqlx::{SqlitePool, migrate::Migrator};
 
 /// Deck name created when the database has zero Decks (SPEC / CONTEXT).
 pub const DEFAULT_DECK_NAME: &str = "Default";
