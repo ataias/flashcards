@@ -1,27 +1,18 @@
 # Runtime app image. Distinct from the root CI toolchain Containerfile.
-# Build from the repo root:
-#   docker build -f deploy/Containerfile -t flashcards:local .
+# Packs a prebuilt flashcards binary — no cargo in this file.
 #
-# Rust pin matches rust-toolchain.toml / the CI image (channel 1.98.1).
-# Official rust/debian tags are multi-arch; apt deps and cargo build are
-# arch-neutral (no amd64-only packages or host-binary COPY).
-
-FROM rust:1.98.1-bookworm AS builder
-
-WORKDIR /src
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libsqlite3-dev \
-        pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY crates ./crates
-
-RUN cargo build --release --locked --bin flashcards
+# ServeDir bakes CARGO_MANIFEST_DIR at compile time. Compile with the
+# crate root at /src/crates/web (see publish-image.yml and the README
+# local recipe) so static files resolve at /src/crates/web/static.
+#
+# Build from the repo root after placing the binary at
+# deploy/bin/<amd64|arm64>/flashcards:
+#   docker build -f deploy/Containerfile -t flashcards:local .
 
 FROM debian:bookworm-slim
+
+# TARGETARCH is amd64 / arm64 (Buildx sets this per platform).
+ARG TARGETARCH=amd64
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -32,9 +23,8 @@ RUN apt-get update \
     && mkdir -p /data \
     && chown flashcards:flashcards /data
 
-# ServeDir uses CARGO_MANIFEST_DIR baked in at compile time (/src/crates/web).
-COPY --from=builder --chown=flashcards:flashcards /src/crates/web/static /src/crates/web/static
-COPY --from=builder --chown=flashcards:flashcards /src/target/release/flashcards /usr/local/bin/flashcards
+COPY --chmod=755 --chown=flashcards:flashcards deploy/bin/${TARGETARCH}/flashcards /usr/local/bin/flashcards
+COPY --chown=flashcards:flashcards crates/web/static /src/crates/web/static
 
 # Image defaults: listen on all interfaces; SQLite on a writable volume.
 ENV FLASHCARDS_BIND=0.0.0.0:3000
