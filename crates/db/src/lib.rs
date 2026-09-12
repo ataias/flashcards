@@ -6,7 +6,7 @@ use std::path::Path;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use domain::ScheduleError;
 
-pub use domain::{Card, Rating, ScheduledReview};
+pub use domain::{Card, CardText, Deck, DeckSummary, Rating, ScheduledReview};
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
@@ -15,19 +15,6 @@ pub use sqlx::SqlitePool;
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Deck {
-    pub id: i64,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeckSummary {
-    pub deck: Deck,
-    pub due_count: usize,
-    pub new_count: usize,
-}
 
 #[derive(Debug)]
 pub enum Error {
@@ -367,13 +354,6 @@ pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<C
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(card_from_row).collect()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CardText {
-    pub id: i64,
-    pub front: String,
-    pub back: String,
 }
 
 /// Front/back list for a Deck page (no FSRS columns).
