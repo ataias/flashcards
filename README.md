@@ -16,7 +16,7 @@ v1 is implemented: Decks, Cards, and a per-Deck Study / Review loop (Again / Har
 
 ## Prerequisites
 
-[Rust](https://www.rust-lang.org/learn/get-started) **1.88** via [rustup](https://rustup.rs/). This repo pins that channel in [`rust-toolchain.toml`](rust-toolchain.toml) (`rustfmt` + `clippy` included). rustup installs it on first `cargo` in the tree.
+[Rust](https://www.rust-lang.org/learn/get-started) via [rustup](https://rustup.rs/). This repo pins the channel in [`rust-toolchain.toml`](rust-toolchain.toml) (`rustfmt` + `clippy` included). rustup installs it on first `cargo` in the tree.
 
 ## Run
 
