@@ -1,6 +1,6 @@
 # Flashcards v1 — Spec
 
-Status: **accepted** (grilled 2026-09-11; Again min-interval clarified 2026-09-11). Implementation in progress.
+Status: **completed** (grilled 2026-09-11; Again min-interval clarified 2026-09-11; smoke-tested on `main` 2026-09-12; parent #1 closed).
 
 Domain language lives in [`CONTEXT.md`](../CONTEXT.md). Hard decisions: [`docs/adr/`](adr/).
 
@@ -17,6 +17,7 @@ A single-user, local Anki-like study app: create Decks and plain-text Cards, Stu
 - Global “Study all”
 - FSRS parameter optimization UI (store Review log so it can come later)
 - Sub-day / learning-step intervals (Again floored to ≥1 day; future grill #21)
+- Layered DDD seam so `web` does not call `db` directly (v1.1 architecture grill #36)
 - Docker / cloud hosting
 
 ## Stack
@@ -44,6 +45,8 @@ flashcards/
     db/                      # SQLx models, migrations, queries
   data/                      # created at runtime (gitignored)
 ```
+
+Note: v1 code still has `web → db` for HTTP orchestration; pure FSRS/queue lives in `domain`. Aligning the dependency graph with this layout is **#36** (v1.1), not a v1 blocker.
 
 ## Configuration
 
@@ -122,4 +125,4 @@ Exact paths may shift during implementation; behavior must not.
 
 ## Non-goals for implementers
 
-Do not add markdown, auth, sync, import/export, optimizer UI, or sub-day learning steps in the v1 pass.
+Do not add markdown, auth, sync, import/export, optimizer UI, sub-day learning steps, or the v1.1 architecture refactor in the v1 pass.
