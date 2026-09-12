@@ -1,16 +1,19 @@
-//! SQLx models, migrations, and queries.
+//! SQLx Store implementation, migrations, and queries.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
-use domain::ScheduleError;
+use domain::{ReviewLogEntry, ScheduleError};
 
 pub use domain::{Card, CardText, Deck, DeckSummary, Rating, ScheduledReview};
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 pub use sqlx::SqlitePool;
+
+mod store;
+pub use store::SqliteStore;
 
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
@@ -110,6 +113,20 @@ impl From<ScheduleError> for Error {
     }
 }
 
+impl From<Error> for domain::Error {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::EmptyDeckName => Self::EmptyDeckName,
+            Error::EmptyCardFront => Self::EmptyCardFront,
+            Error::EmptyCardBack => Self::EmptyCardBack,
+            Error::DeckNotFound { deck_id } => Self::DeckNotFound { deck_id },
+            Error::CardNotFound { card_id } => Self::CardNotFound { card_id },
+            Error::Schedule(err) => Self::Schedule(err),
+            other => Self::storage(other),
+        }
+    }
+}
+
 pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
     let path = path.as_ref();
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -119,11 +136,16 @@ pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
         })?;
     }
 
+    let existed = path.exists();
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
         .foreign_keys(true);
-    connect(options).await
+    let pool = connect(options).await?;
+    if !existed {
+        ensure_default_deck(&pool).await?;
+    }
+    Ok(pool)
 }
 
 async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, Error> {
@@ -132,7 +154,6 @@ async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, Error> {
         .connect_with(options)
         .await?;
     MIGRATOR.run(&pool).await?;
-    ensure_default_deck(&pool).await?;
     Ok(pool)
 }
 
@@ -145,23 +166,16 @@ pub async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
     finish_immediate(conn, result).await
 }
 
-/// Delete a Deck (Cards and Review logs cascade) and recreate `Default` if none remain.
+/// Delete a Deck (Cards and Review logs cascade). Missing ids are `DeckNotFound`.
 pub async fn delete_deck(pool: &SqlitePool, deck_id: i64) -> Result<(), Error> {
-    let mut conn = pool.acquire().await?;
-    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-    let result = delete_deck_on(&mut conn, deck_id).await;
-    finish_immediate(conn, result).await
-}
-
-async fn delete_deck_on(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
-    deck_id: i64,
-) -> Result<(), Error> {
-    sqlx::query("DELETE FROM decks WHERE id = ?")
+    let result = sqlx::query("DELETE FROM decks WHERE id = ?")
         .bind(deck_id)
-        .execute(&mut **conn)
+        .execute(pool)
         .await?;
-    seed_default_if_empty(conn).await
+    if result.rows_affected() == 0 {
+        return Err(Error::DeckNotFound { deck_id });
+    }
+    Ok(())
 }
 
 async fn seed_default_if_empty(
@@ -503,24 +517,50 @@ pub async fn study_queue<Tz: TimeZone>(
     Ok(domain::select_study_queue(&cards, &first_local, now_local))
 }
 
-pub async fn apply_review(
+/// Persist a Review: re-fetch the Card inside the write transaction, apply the
+/// Rating to that row, then write the Card update and Review log together.
+pub async fn commit_review(
     pool: &SqlitePool,
-    card_id: i64,
-    scheduled: &ScheduledReview,
-    rating: Rating,
+    card: &Card,
+    entry: &ReviewLogEntry,
 ) -> Result<(), Error> {
-    let mut tx = pool.begin().await?;
-    apply_review_on(&mut tx, card_id, scheduled, rating).await?;
-    tx.commit().await?;
-    Ok(())
+    persist_review(pool, card.id, entry.rating, entry.rated_at)
+        .await
+        .map(|_| ())
 }
 
-async fn apply_review_on(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    card_id: i64,
-    scheduled: &ScheduledReview,
+pub async fn rate_card(
+    pool: &SqlitePool,
+    card: &Card,
     rating: Rating,
+    now: DateTime<Utc>,
+) -> Result<ScheduledReview, Error> {
+    let updated = persist_review(pool, card.id, rating, now).await?;
+    scheduled_review(&updated)
+}
+
+async fn persist_review(
+    pool: &SqlitePool,
+    card_id: i64,
+    rating: Rating,
+    now: DateTime<Utc>,
+) -> Result<Card, Error> {
+    let mut tx = pool.begin().await?;
+    let fresh = get_card_on(&mut *tx, card_id)
+        .await?
+        .ok_or(Error::CardNotFound { card_id })?;
+    let (updated, entry) = fresh.apply_rating(rating, now)?;
+    write_review_on(&mut tx, &updated, &entry).await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+async fn write_review_on(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    card: &Card,
+    entry: &ReviewLogEntry,
 ) -> Result<(), Error> {
+    let scheduled = scheduled_review(card)?;
     let due = rfc3339(scheduled.due);
     let last_review = rfc3339(scheduled.last_review);
     sqlx::query(
@@ -532,34 +572,27 @@ async fn apply_review_on(
     .bind(scheduled.memory.difficulty)
     .bind(&due)
     .bind(&last_review)
-    .bind(card_id)
+    .bind(card.id)
     .execute(&mut **tx)
     .await?;
     sqlx::query("INSERT INTO review_logs (card_id, rated_at, rating) VALUES (?, ?, ?)")
-        .bind(card_id)
+        .bind(entry.card_id)
         .bind(&last_review)
-        .bind(rating.as_grade())
+        .bind(entry.rating.as_grade())
         .execute(&mut **tx)
         .await?;
     Ok(())
 }
 
-/// Re-fetches the Card inside the write transaction so `schedule` uses the
-/// row being updated, not a possibly stale caller-held copy.
-pub async fn rate_card(
-    pool: &SqlitePool,
-    card: &Card,
-    rating: Rating,
-    now: DateTime<Utc>,
-) -> Result<ScheduledReview, Error> {
-    let mut tx = pool.begin().await?;
-    let fresh = get_card_on(&mut *tx, card.id)
-        .await?
-        .ok_or(Error::CardNotFound { card_id: card.id })?;
-    let scheduled = domain::schedule(fresh.memory, fresh.last_review, rating, now)?;
-    apply_review_on(&mut tx, fresh.id, &scheduled, rating).await?;
-    tx.commit().await?;
-    Ok(scheduled)
+fn scheduled_review(card: &Card) -> Result<ScheduledReview, Error> {
+    match (card.memory, card.due, card.last_review) {
+        (Some(memory), Some(due), Some(last_review)) => Ok(ScheduledReview {
+            memory,
+            due,
+            last_review,
+        }),
+        _ => Err(Error::IncompleteFsrs { card_id: card.id }),
+    }
 }
 
 fn rfc3339(instant: DateTime<Utc>) -> String {
@@ -606,7 +639,7 @@ fn card_from_row(row: CardRow) -> Result<Card, Error> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use domain::{Card, Rating};
+    use domain::{Card, Rating, Store};
     use sqlx::sqlite::SqliteConnectOptions;
 
     async fn open_memory() -> SqlitePool {
@@ -713,7 +746,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_last_deck_recreates_default() {
+    async fn reopen_after_last_delete_does_not_reseed() {
+        let path = temp_db_path();
+        remove_db(&path);
+
+        let pool = open(&path).await.unwrap();
+        let original_id = list_decks(&pool).await.unwrap()[0].id;
+        delete_deck(&pool, original_id).await.unwrap();
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+        pool.close().await;
+
+        let pool = open(&path).await.unwrap();
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+
+        pool.close().await;
+        remove_db(&path);
+    }
+
+    #[tokio::test]
+    async fn delete_last_deck_leaves_zero_decks() {
         let pool = open_memory().await;
         let original = list_decks(&pool).await.unwrap();
         assert_eq!(original.len(), 1);
@@ -721,10 +772,17 @@ mod tests {
 
         delete_deck(&pool, original_id).await.unwrap();
 
-        let decks = list_decks(&pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
-        assert_ne!(decks[0].id, original_id);
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_missing_deck_is_not_found() {
+        let pool = open_memory().await;
+        assert!(matches!(
+            delete_deck(&pool, 999).await.unwrap_err(),
+            Error::DeckNotFound { deck_id: 999 }
+        ));
+        assert_eq!(list_decks(&pool).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -748,7 +806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_deck_cascades_cards_and_review_logs_then_recreates_default() {
+    async fn delete_deck_cascades_cards_and_review_logs() {
         let pool = open_memory().await;
         let deck_id = list_decks(&pool).await.unwrap()[0].id;
         let card_id = insert_card(&pool, deck_id).await;
@@ -760,10 +818,7 @@ mod tests {
 
         assert_eq!(count(&pool, "cards").await, 0);
         assert_eq!(count(&pool, "review_logs").await, 0);
-        let decks = list_decks(&pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
-        assert_ne!(decks[0].id, deck_id);
+        assert!(list_decks(&pool).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1058,5 +1113,72 @@ mod tests {
         assert_eq!(scheduled.memory, expected.memory);
         assert_eq!(scheduled.due, expected.due);
         assert_eq!(scheduled.last_review, later);
+    }
+
+    #[tokio::test]
+    async fn store_commit_review_schedules_from_row_refetched_in_write_txn() {
+        let store = SqliteStore::new(open_memory().await);
+        let deck = domain::create_deck(&store, "Default").await.unwrap();
+        let stale = domain::create_card(&store, deck.id, "Q", "A")
+            .await
+            .unwrap();
+        assert!(stale.is_new());
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let (first, first_entry) = stale.apply_rating(Rating::Good, now).unwrap();
+        store.commit_review(&first, &first_entry).await.unwrap();
+        let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+
+        let later = now + chrono::Duration::days(1);
+        let expected = after_first.apply_rating(Rating::Good, later).unwrap().0;
+        let (from_stale, stale_entry) = stale.apply_rating(Rating::Good, later).unwrap();
+        assert_ne!(
+            expected.due, from_stale.due,
+            "stale New Card schedule must differ from persisted-state schedule"
+        );
+
+        store
+            .commit_review(&from_stale, &stale_entry)
+            .await
+            .unwrap();
+        let stored = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        assert_eq!(stored.memory, expected.memory);
+        assert_eq!(stored.due, expected.due);
+        assert_eq!(stored.last_review, expected.last_review);
+    }
+
+    #[tokio::test]
+    async fn store_use_cases_round_trip_and_delete_last_deck() {
+        let store = SqliteStore::new(open_memory().await);
+        let seeded = domain::list_home(&store, Utc::now()).await.unwrap();
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(seeded[0].deck.name, DEFAULT_DECK_NAME);
+
+        let extra = domain::create_deck(&store, "Spanish").await.unwrap();
+        let card = domain::create_card(&store, extra.id, "Q", "A")
+            .await
+            .unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        domain::rate(&store, card.id, Rating::Good, now)
+            .await
+            .unwrap();
+        let stored = domain::get_card(&store, card.id).await.unwrap().unwrap();
+        assert!(!stored.is_new());
+
+        domain::delete_deck(&store, seeded[0].deck.id)
+            .await
+            .unwrap();
+        domain::delete_deck(&store, extra.id).await.unwrap();
+        assert!(domain::list_home(&store, now).await.unwrap().is_empty());
+        assert!(matches!(
+            domain::delete_deck(&store, extra.id).await.unwrap_err(),
+            domain::Error::DeckNotFound { deck_id } if deck_id == extra.id
+        ));
+        assert!(matches!(
+            domain::rate(&store, card.id, Rating::Good, now)
+                .await
+                .unwrap_err(),
+            domain::Error::CardNotFound { card_id } if card_id == card.id
+        ));
     }
 }

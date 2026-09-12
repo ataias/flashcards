@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn htmx_create_rename_delete_and_default_recreate() {
+    async fn htmx_create_rename_delete_last_deck_leaves_empty() {
         let db = test_db().await;
         let pool = &db.pool;
         let (status, html) = post_form(app(pool.clone()), "/decks", "name=Spanish", true).await;
@@ -193,12 +193,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert!(html.contains("Default"));
-        let decks = db::list_decks(pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, db::DEFAULT_DECK_NAME);
-        assert_ne!(decks[0].id, italiano_id);
-        assert_ne!(decks[0].id, default_id);
+        assert!(!html.contains("Italiano"));
+        assert!(!html.contains("Default"));
+        assert!(html.contains("New Deck"));
+        assert!(db::list_decks(pool).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -431,6 +429,8 @@ mod tests {
     async fn missing_deck_or_card_is_not_found() {
         let db = test_db().await;
         let (status, _) = get(app(db.pool.clone()), "/decks/999").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = post_form(app(db.pool.clone()), "/decks/999/delete", "", true).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = post_form(
             app(db.pool.clone()),
