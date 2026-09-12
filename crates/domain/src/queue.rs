@@ -12,7 +12,6 @@ pub fn apply_daily_new_cap(new_count: usize, introduced_today: usize) -> usize {
     new_count.min(remaining_new_card_slots(introduced_today))
 }
 
-/// Home-page New count: uncapped New Cards, then the local-day cap.
 pub fn capped_new_count_for_local_day<Tz: TimeZone>(
     uncapped_new: usize,
     first_reviewed_at: &[DateTime<Tz>],
