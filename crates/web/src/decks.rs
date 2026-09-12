@@ -74,8 +74,11 @@ pub async fn delete_deck(
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    db::delete_deck(&pool, deck_id).await?;
-    after_change(&pool, &headers, None).await
+    match db::delete_deck(&pool, deck_id).await {
+        Ok(()) => after_change(&pool, &headers, None).await,
+        Err(db::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 async fn after_change(
