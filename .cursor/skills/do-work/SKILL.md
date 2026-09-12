@@ -64,10 +64,10 @@ Until CI exists, still require fmt / clippy / test / build.
 ## 6. Open the PR
 
 - Base: `main` (or the stacked parent branch when stacking).
-- Title: clear and scoped to the issue.
+- Title: clear, human-scoped, and scoped to the issue. **Do not** put issue numbers in the title (`#38`, `Fixes #38`, `issue 38`, etc.). The issue link belongs in the body only.
 - Body must include:
   - Summary of what changed
-  - `Fixes #N`
+  - `Fixes #N` (body only — never in the title)
   - **Test plan** (commands you ran; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
   - **SPEC/CONTEXT deviations** (or `none`)
   - Stacking notes when base ≠ `main`
