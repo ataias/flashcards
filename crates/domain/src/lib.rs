@@ -54,8 +54,12 @@ impl Card {
         now: DateTime<Utc>,
     ) -> Result<(Card, ReviewLogEntry), ScheduleError> {
         let mut card = self.clone();
-        match self.phase {
-            Phase::New | Phase::Learning => {
+        if card.phase == Phase::New {
+            card.phase = Phase::Learning;
+            card.learning_step = Some(0);
+        }
+        match card.phase {
+            Phase::Learning | Phase::New => {
                 apply_step_rating(&mut card, rating, now, &LEARNING_STEPS, Phase::Learning)?;
             }
             Phase::Relearning => {
@@ -260,6 +264,26 @@ mod apply_rating_tests {
         assert_eq!(entry.rating, Rating::Good);
         assert_eq!(updated.front, card.front);
         assert_eq!(updated.back, card.back);
+    }
+
+    #[test]
+    fn first_rating_from_new_matches_learning_rules_at_step_zero() {
+        let now = noon();
+        let at_step_zero = Card {
+            phase: Phase::Learning,
+            learning_step: Some(0),
+            ..new_card()
+        };
+        for rating in [Rating::Again, Rating::Hard, Rating::Good, Rating::Easy] {
+            let from_new = new_card().apply_rating(rating, now).unwrap().0;
+            let from_learning = at_step_zero.apply_rating(rating, now).unwrap().0;
+            assert_eq!(from_new.phase, from_learning.phase);
+            assert_eq!(from_new.learning_step, from_learning.learning_step);
+            assert_eq!(from_new.memory, from_learning.memory);
+            assert_eq!(from_new.due, from_learning.due);
+            assert_eq!(from_new.last_review, from_learning.last_review);
+            assert!(!from_new.is_new());
+        }
     }
 
     #[test]

@@ -226,6 +226,23 @@ mod tests {
     }
 
     #[test]
+    fn easy_graduation_still_consumes_a_new_cap_slot() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let graduated = reviewed_card(1, 1, now_utc + Duration::days(3));
+        let remaining: Vec<_> = (2..=21).map(|id| new_card(id, 1)).collect();
+        let mut cards = vec![graduated];
+        cards.extend(remaining);
+        let inputs = HomeInputs {
+            decks: vec![home_deck(deck(1, "Default"), cards, vec![now_utc])],
+        };
+        let summaries = summarize_home(&inputs, now);
+        assert_eq!(summaries[0].new_count, NEW_CARDS_PER_LOCAL_DAY - 1);
+        assert_eq!(summaries[0].due_count, 0);
+    }
+
+    #[test]
     fn each_deck_applies_the_new_cap_independently() {
         let now = tz_plus_9().with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
         let default_cards: Vec<_> = (1..=25).map(|id| new_card(id, 1)).collect();

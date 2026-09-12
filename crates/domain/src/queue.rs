@@ -254,6 +254,21 @@ mod tests {
     }
 
     #[test]
+    fn easy_from_new_consumes_a_new_cap_slot() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let graduated = reviewed_card(1, now_utc + Duration::days(3));
+        let new_cards: Vec<_> = (2..=22).map(new_card).collect();
+        let mut cards = vec![graduated];
+        cards.extend(new_cards);
+        let queue = select_study_queue(&cards, &[now], now);
+        assert_eq!(ids(&queue), (2..=20).collect::<Vec<_>>());
+        assert_eq!(queue.len(), NEW_CARDS_PER_LOCAL_DAY - 1);
+        assert!(queue.iter().all(Card::is_new));
+    }
+
+    #[test]
     fn left_new_cards_are_not_counted_as_new() {
         let tz = tz_plus_9();
         let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();

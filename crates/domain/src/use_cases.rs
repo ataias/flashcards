@@ -517,9 +517,11 @@ mod tests {
                 .unwrap();
         }
         let now = noon_utc();
-        let (updated, _) = rate(&store, 1, Rating::Easy, now).await.unwrap();
+        let (updated, entry) = rate(&store, 1, Rating::Easy, now).await.unwrap();
         assert_eq!(updated.phase, Phase::Review);
         assert!(!updated.is_new());
+        assert_eq!(entry.rating, Rating::Easy);
+        assert_eq!(store.lock().reviews.len(), 1);
 
         let summaries = list_home(&store, now).await.unwrap();
         assert_eq!(summaries[0].new_count, 2);
