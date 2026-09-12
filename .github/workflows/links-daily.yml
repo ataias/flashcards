@@ -1,4 +1,3 @@
-# ci.yml is not required — this workflow builds the same image the same way.
 name: Links daily
 
 on:
@@ -6,7 +5,6 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-# actions: write is required so docker/build-push-action (type=gha) can persist layer cache.
 permissions:
   contents: read
   actions: write
