@@ -20,6 +20,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: rust:1.98.1-bookworm
+    # Job containers default to Debian `sh` (dash), which rejects `pipefail`.
+    defaults:
+      run:
+        shell: bash
     strategy:
       matrix:
         include:
@@ -37,12 +41,14 @@ jobs:
           apt-get install -y --no-install-recommends libsqlite3-dev pkg-config
 
       # ServeDir uses CARGO_MANIFEST_DIR baked at compile time. Building
-      # from /src keeps that path at /src/crates/web (matches the runtime image).
+      # from a real directory at /src keeps that path at /src/crates/web
+      # (matches the runtime image). Use tar, not a symlink, so rustc does
+      # not canonicalize back to GITHUB_WORKSPACE.
       - name: Place sources at /src
         run: |
           set -euo pipefail
           mkdir -p /src
-          cp -a "${GITHUB_WORKSPACE}/." /src/
+          tar -C "${GITHUB_WORKSPACE}" -cf - . | tar -C /src -xf -
 
       - name: Cache Cargo registry and target
         uses: Swatinem/rust-cache@v2
