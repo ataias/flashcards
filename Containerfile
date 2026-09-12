@@ -1,5 +1,5 @@
 # CI toolchain image. Rust pin matches rust-toolchain.toml (channel 1.88).
-# App sources are not copied — Actions checks out the repo at runtime (SPEC-ci).
+# App sources are not copied — Actions checks out the repo at runtime.
 FROM rust:1.88-bookworm
 
 RUN rustup component add rustfmt clippy

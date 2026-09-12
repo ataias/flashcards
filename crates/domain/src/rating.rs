@@ -1,4 +1,3 @@
-/// Outcome of a Review. Mapped to FSRS grades 1–4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rating {
     Again = 1,

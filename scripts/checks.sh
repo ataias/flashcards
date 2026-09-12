@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-ci PR/main gate (edition, fmt, clippy, test, build, relative lychee).
 # Run from any cwd. Needs rustfmt, clippy, jq, and lychee on PATH — or:
 #   docker run --rm -v "$PWD:/workspace" -w /workspace flashcards-ci:local ./scripts/checks.sh
 set -euo pipefail
