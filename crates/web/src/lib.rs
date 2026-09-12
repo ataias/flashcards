@@ -2,6 +2,7 @@ mod cards;
 mod config;
 mod decks;
 mod error;
+mod study;
 
 pub use config::{Config, ConfigError, DEFAULT_BIND, DEFAULT_DB_PATH};
 
@@ -30,8 +31,11 @@ pub fn app(pool: SqlitePool) -> Router {
         .route("/decks/{id}/rename", post(decks::rename_deck))
         .route("/decks/{id}/delete", post(decks::delete_deck))
         .route("/decks/{id}/cards", post(cards::create_card))
+        .route("/decks/{id}/study", get(study::study_page))
         .route("/cards/{id}", post(cards::update_card))
         .route("/cards/{id}/delete", post(cards::delete_card))
+        .route("/cards/{id}/reveal", post(study::reveal))
+        .route("/cards/{id}/rate", post(study::rate))
         .nest_service("/static", ServeDir::new(static_dir()))
         .with_state(pool)
 }
@@ -98,6 +102,10 @@ mod tests {
         )));
         assert!(html.contains("due 0"));
         assert!(html.contains("new 0"));
+        assert!(html.contains(&format!(
+            "/decks/{}/study",
+            db::list_decks(&db.pool).await.unwrap()[0].id
+        )));
         assert!(html.contains("hx-confirm"));
         assert!(html.contains("/static/htmx.min.js"));
         assert!(html.contains("/static/app.css"));
@@ -224,6 +232,7 @@ mod tests {
         assert!(html.contains("Default"));
         assert!(html.contains("No Cards in this Deck yet"));
         assert!(html.contains("id=\"cards\""));
+        assert!(html.contains(&format!("/decks/{deck_id}/study")));
 
         let (status, html) = post_form(
             app(pool.clone()),
@@ -436,6 +445,13 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = post_form(app(db.pool.clone()), "/cards/999/delete", "", true).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = get(app(db.pool.clone()), "/decks/999/study").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = post_form(app(db.pool.clone()), "/cards/999/reveal", "", true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) =
+            post_form(app(db.pool.clone()), "/cards/999/rate", "rating=3", true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -461,5 +477,211 @@ mod tests {
         assert_eq!(body, "Internal server error");
         assert!(!body.contains("42"));
         assert!(!body.contains("card"));
+    }
+
+    #[tokio::test]
+    async fn study_empty_when_no_cards() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards to Review"));
+        assert!(html.contains("<h1>Study</h1>"));
+        assert!(html.contains(&format!("/decks/{deck_id}")));
+        assert!(!html.contains("Show answer"));
+    }
+
+    #[tokio::test]
+    async fn study_shows_front_hides_back() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Capital of France", "Paris")
+            .await
+            .unwrap();
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Capital of France"));
+        assert!(!html.contains("Paris"));
+        assert!(html.contains("Show answer"));
+        assert!(html.contains(r#"method="post""#));
+        assert!(html.contains(&format!(r#"action="/cards/{}/reveal""#, card.id)));
+        assert!(!html.contains("Again"));
+    }
+
+    #[tokio::test]
+    async fn reveal_shows_back_and_ratings() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Q", "Secret answer")
+            .await
+            .unwrap();
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}/reveal", card.id),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("id=\"study\""));
+        assert!(html.contains(">Q</p>"));
+        assert!(html.contains(">Secret answer</p>"));
+        assert!(html.contains("Again"));
+        assert!(html.contains("Hard"));
+        assert!(html.contains("Good"));
+        assert!(html.contains("Easy"));
+        assert!(html.contains(r#"method="post""#));
+        assert!(html.contains(&format!(r#"action="/cards/{}/rate""#, card.id)));
+    }
+
+    #[tokio::test]
+    async fn rate_persists_and_htmx_advances_then_done() {
+        let db = test_db().await;
+        let pool = &db.pool;
+        let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+        let first = db::create_card(pool, deck_id, "Q1", "A1").await.unwrap();
+        let second = db::create_card(pool, deck_id, "Q2", "A2").await.unwrap();
+
+        let (status, html) = post_form(
+            app(pool.clone()),
+            &format!("/cards/{}/rate", first.id),
+            "rating=3",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Q2"));
+        assert!(!html.contains("A2"));
+        assert!(!html.contains("Q1"));
+        assert!(html.contains("Show answer"));
+
+        let stored = db::get_card(pool, first.id).await.unwrap().unwrap();
+        assert!(!stored.is_new());
+        assert!(stored.due.unwrap() > chrono::Utc::now());
+
+        let (status, html) = post_form(
+            app(pool.clone()),
+            &format!("/cards/{}/rate", second.id),
+            "rating=4",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards to Review"));
+        assert!(!html.contains("Q2"));
+        let stored = db::get_card(pool, second.id).await.unwrap().unwrap();
+        assert!(!stored.is_new());
+        assert!(stored.due.unwrap() > chrono::Utc::now());
+    }
+
+    #[tokio::test]
+    async fn study_respects_new_card_cap() {
+        let db = test_db().await;
+        let pool = &db.pool;
+        let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+        let now = chrono::Utc::now();
+        for i in 0..21 {
+            let card = db::create_card(pool, deck_id, &format!("Q{i}"), &format!("A{i}"))
+                .await
+                .unwrap();
+            if i < 20 {
+                db::rate_card(pool, &card, db::Rating::Good, now)
+                    .await
+                    .unwrap();
+            }
+        }
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{deck_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards to Review"));
+        assert!(!html.contains("Q20"));
+    }
+
+    #[tokio::test]
+    async fn invalid_rating_keeps_revealed_card() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Q", "A").await.unwrap();
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}/rate", card.id),
+            "rating=9",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Choose Again, Hard, Good, or Easy"));
+        assert!(html.contains(">Q</p>"));
+        assert!(html.contains(">A</p>"));
+        let stored = db::get_card(&db.pool, card.id).await.unwrap().unwrap();
+        assert!(stored.is_new());
+    }
+
+    #[tokio::test]
+    async fn non_htmx_rate_redirects_to_study_done() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "Q", "A").await.unwrap();
+        let (status, _) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}/rate", card.id),
+            "rating=1",
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("No Cards to Review"));
+        let stored = db::get_card(&db.pool, card.id).await.unwrap().unwrap();
+        assert!(!stored.is_new());
+        assert!(stored.due.unwrap() > chrono::Utc::now());
+    }
+
+    #[tokio::test]
+    async fn study_stays_inside_the_requested_deck() {
+        let db = test_db().await;
+        let pool = &db.pool;
+        let default_id = db::list_decks(pool).await.unwrap()[0].id;
+        let other = db::create_deck(pool, "Spanish").await.unwrap();
+        db::create_card(pool, default_id, "Default front", "Default back")
+            .await
+            .unwrap();
+        db::create_card(pool, other.id, "Spanish front", "Spanish back")
+            .await
+            .unwrap();
+
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{default_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Default front"));
+        assert!(!html.contains("Spanish front"));
+
+        let (status, html) = get(app(pool.clone()), &format!("/decks/{}/study", other.id)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Spanish front"));
+        assert!(!html.contains("Default front"));
+    }
+
+    #[tokio::test]
+    async fn study_card_text_is_html_escaped() {
+        let db = test_db().await;
+        let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+        let card = db::create_card(&db.pool, deck_id, "<script>alert(1)</script>", "a&b")
+            .await
+            .unwrap();
+        let (status, html) = get(app(db.pool.clone()), &format!("/decks/{deck_id}/study")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
+
+        let (status, html) = post_form(
+            app(db.pool.clone()),
+            &format!("/cards/{}/reveal", card.id),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("a&#38;b"));
     }
 }
