@@ -37,7 +37,7 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 
 ## Use
 
-1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. (v1 recreates `Default` if you delete the last Deck; v1.1 allows an empty list — see SPEC-v1.1.)
+1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. With no Decks, home shows an empty list and a create-Deck form.
 2. Open a Deck to create, edit, or delete plain-text Cards (front / back).
 3. Study a Deck: front → Show answer → Again / Hard / Good / Easy. The queue is due Cards plus up to 20 New Cards per local calendar day.
 
