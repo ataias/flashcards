@@ -12,6 +12,7 @@ Fixes #
 - [ ] `cargo build --workspace`
 - [ ] lychee relative (when available)
 - [ ] `.sqlx/` updated if queries changed
+- [ ] UI visual proof (screenshots and/or short video) in this Test plan — required for UI-facing PRs; N/A for CI-only / non-UI
 
 ## SPEC / CONTEXT deviations
 
