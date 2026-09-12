@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ deck_name }} — Flashcards</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <main>
+    <p class="page-nav"><a href="/">Decks</a></p>
+    <h1>{{ deck_name }}</h1>
+    {% include "cards.html" %}
+  </main>
+</body>
+</html>

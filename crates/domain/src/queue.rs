@@ -4,6 +4,29 @@ use crate::Card;
 
 pub const NEW_CARDS_PER_LOCAL_DAY: usize = 20;
 
+pub fn remaining_new_card_slots(introduced_today: usize) -> usize {
+    NEW_CARDS_PER_LOCAL_DAY.saturating_sub(introduced_today)
+}
+
+pub fn apply_daily_new_cap(new_count: usize, introduced_today: usize) -> usize {
+    new_count.min(remaining_new_card_slots(introduced_today))
+}
+
+pub fn capped_new_count_for_local_day<Tz: TimeZone>(
+    uncapped_new: usize,
+    first_reviewed_at: &[DateTime<Tz>],
+    now: &DateTime<Tz>,
+) -> usize {
+    apply_daily_new_cap(
+        uncapped_new,
+        new_cards_introduced_on_local_day(first_reviewed_at, now),
+    )
+}
+
+pub fn is_due_at(due: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    due <= now
+}
+
 pub fn new_cards_introduced_on_local_day<Tz: TimeZone>(
     first_reviewed_at: &[DateTime<Tz>],
     now: &DateTime<Tz>,
@@ -23,8 +46,8 @@ pub fn select_study_queue<Tz: TimeZone>(
     now: DateTime<Tz>,
 ) -> Vec<Card> {
     let now_utc = now.with_timezone(&Utc);
-    let remaining_new = NEW_CARDS_PER_LOCAL_DAY
-        .saturating_sub(new_cards_introduced_on_local_day(first_reviewed_at, &now));
+    let remaining_new =
+        remaining_new_card_slots(new_cards_introduced_on_local_day(first_reviewed_at, &now));
 
     let mut due: Vec<Card> = cards
         .iter()
@@ -43,7 +66,7 @@ pub fn select_study_queue<Tz: TimeZone>(
 
 fn is_due(card: &Card, now: DateTime<Utc>) -> bool {
     match (card.memory, card.due) {
-        (Some(_), Some(due)) => due <= now,
+        (Some(_), Some(due)) => is_due_at(due, now),
         _ => false,
     }
 }
@@ -87,6 +110,27 @@ mod tests {
 
     fn ids(cards: &[Card]) -> Vec<i64> {
         cards.iter().map(|card| card.id).collect()
+    }
+
+    #[test]
+    fn apply_daily_new_cap_floors_at_zero_and_twenty() {
+        assert_eq!(apply_daily_new_cap(5, 0), 5);
+        assert_eq!(apply_daily_new_cap(25, 0), NEW_CARDS_PER_LOCAL_DAY);
+        assert_eq!(apply_daily_new_cap(5, NEW_CARDS_PER_LOCAL_DAY), 0);
+        assert_eq!(apply_daily_new_cap(5, 17), 3);
+    }
+
+    #[test]
+    fn capped_new_count_uses_local_day_introductions() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let today = tz.with_ymd_and_hms(2026, 9, 11, 9, 0, 0).unwrap();
+        let yesterday = tz.with_ymd_and_hms(2026, 9, 10, 23, 30, 0).unwrap();
+        assert_eq!(capped_new_count_for_local_day(10, &[today; 17], &now), 3);
+        assert_eq!(
+            capped_new_count_for_local_day(10, &[yesterday; NEW_CARDS_PER_LOCAL_DAY], &now),
+            10
+        );
     }
 
     #[test]
