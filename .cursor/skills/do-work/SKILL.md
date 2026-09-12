@@ -83,8 +83,10 @@ Stacked PRs go stale when `main` (or a lower stack branch) moves. **Check before
    - If it is behind its intended base, **rebase** onto that base (not merge).
    - Push with `--force-with-lease` only (never bare `--force`).
 4. Keep GitHub PR **base** branches correct after rebases (tip still targets the parent stack branch; bottom targets `main`).
-5. Re-run §5 checks on the tip after the full stack rebase.
-6. If rebase conflicts are non-trivial or change behavior, stop and ping **Architect**.
+5. **Every open stack must include a PR with base = `main` (the bottom).** Never leave orphan tips whose parent PRs are closed.
+6. Do **not** close stacked PRs, retarget a mid-stack tip onto `main` as a mega-diff, or force-push / reset a parent stack branch onto `main`. Only Ataias closes or merges. If `gh stack` 403s or would close/destroy parents, stop and set bases with `gh pr edit --base` (or the API) instead.
+7. Re-run §5 checks on the tip after the full stack rebase.
+8. If rebase conflicts are non-trivial or change behavior, stop and ping **Architect**.
 
 Do **not** open a fresh PR to “fix” a rebase — update the existing issue branch.
 
