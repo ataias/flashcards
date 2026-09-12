@@ -1,5 +1,6 @@
 ## Summary
 
+<!-- PR title: no issue number (`#N`, `Fixes #N`, `issue N`). `Fixes #` stays in this body. -->
 <!-- What changed and why -->
 
 Fixes #
