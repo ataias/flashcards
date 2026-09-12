@@ -50,15 +50,45 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    #[tokio::test]
-    async fn app_error_hides_internal_details() {
-        let response =
-            AppError::Domain(domain::Error::CardNotFound { card_id: 42 }).into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    async fn body_of(error: AppError) -> (StatusCode, String) {
+        let response = error.into_response();
+        let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body = String::from_utf8(bytes.to_vec()).unwrap();
-        assert_eq!(body, "Internal server error");
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn not_found_is_404_without_ids() {
+        let (status, body) = body_of(AppError::Domain(domain::Error::CardNotFound {
+            card_id: 42,
+        }))
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(!body.contains("42"));
         assert!(!body.contains("card"));
+
+        let (status, body) =
+            body_of(AppError::Domain(domain::Error::DeckNotFound { deck_id: 7 })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(!body.contains('7'));
+        assert!(!body.contains("deck"));
+    }
+
+    #[tokio::test]
+    async fn empty_fields_are_bad_request() {
+        let (status, body) = body_of(AppError::Domain(domain::Error::EmptyDeckName)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, "Bad request");
+    }
+
+    #[tokio::test]
+    async fn storage_hides_internal_details() {
+        let (status, body) = body_of(AppError::Domain(domain::Error::storage(
+            std::io::Error::other("secret-path"),
+        )))
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, "Internal server error");
+        assert!(!body.contains("secret"));
     }
 }

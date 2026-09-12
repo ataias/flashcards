@@ -39,7 +39,21 @@ impl std::error::Error for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        eprintln!("internal error: {self}");
-        (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        match self {
+            Self::Domain(
+                domain::Error::DeckNotFound { .. } | domain::Error::CardNotFound { .. },
+            ) => StatusCode::NOT_FOUND.into_response(),
+            Self::Domain(
+                domain::Error::EmptyDeckName
+                | domain::Error::EmptyCardFront
+                | domain::Error::EmptyCardBack,
+            ) => (StatusCode::BAD_REQUEST, "Bad request").into_response(),
+            err @ (Self::Domain(domain::Error::Schedule(_))
+            | Self::Domain(domain::Error::Storage(_))
+            | Self::Render(_)) => {
+                eprintln!("internal error: {err}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+            }
+        }
     }
 }
