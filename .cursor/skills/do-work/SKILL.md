@@ -61,7 +61,7 @@ Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
 
-**Basic regression proof (refactor / architecture stacks):** `cargo test --workspace` green is necessary but not sufficient in the PR body — especially for v1.1-style refactors. **Name** which HTTP/integration tests still prove the app works after the move (home, deck/card CRUD, study/rate as relevant). Do **not** mark coverage N/A for “package split / wiring only” without naming the suite that still exercises the app (e.g. `crates/flashcards/tests/http.rs`). If a layer changes user-visible behavior, keep the UI visual-proof rules above; if that proof lives on a stacked UI PR, say so with an explicit link.
+**Basic regression proof:** For refactor / architecture / wiring PRs, follow [`regression-proof.md`](./regression-proof.md) in the Test plan. UI visual-proof rules above still apply when behavior is user-visible.
 
 ## 6. Open the PR
 
