@@ -61,6 +61,8 @@ Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
 
+**Basic regression proof (refactor / architecture stacks):** `cargo test --workspace` green is necessary but not sufficient in the PR body — especially for v1.1-style refactors. **Name** which HTTP/integration tests still prove the app works after the move (home, deck/card CRUD, study/rate as relevant). Do **not** mark coverage N/A for “package split / wiring only” without naming the suite that still exercises the app (e.g. `crates/flashcards/tests/http.rs`). If a layer changes user-visible behavior, keep the UI visual-proof rules above; if that proof lives on a stacked UI PR, say so with an explicit link.
+
 ## 6. Open the PR
 
 - Base: `main` (or the stacked parent branch when stacking).
@@ -68,7 +70,7 @@ Until CI exists, still require fmt / clippy / test / build.
 - Body must include:
   - Summary of what changed
   - `Fixes #N` (body only — never in the title)
-  - **Test plan** (commands you ran; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
+  - **Test plan** (commands you ran; name the HTTP/integration suite that still proves the app — do not N/A wiring-only without naming it; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
   - **SPEC/CONTEXT deviations** (or `none`)
   - Stacking notes when base ≠ `main`
 - Use `.github/PULL_REQUEST_TEMPLATE.md` when present.
