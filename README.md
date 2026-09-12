@@ -6,11 +6,12 @@ Repo: https://github.com/ataias/flashcards
 
 ## Status
 
-v1 is **completed**. v1.1 architecture (deep modules + `Store` seam) is specified; implementation tracked in [#36](https://github.com/ataias/flashcards/issues/36).
+v1 and v1.1 are on `main`. **v1.2** (Learning / Relearning steps + unfloored FSRS Review) is specified; implementation tracked in [#21](https://github.com/ataias/flashcards/issues/21).
 
 - [`CONTEXT.md`](CONTEXT.md) — domain language
 - [`docs/SPEC-v1.md`](docs/SPEC-v1.md) — completed v1 product/spec
 - [`docs/SPEC-v1.1.md`](docs/SPEC-v1.1.md) — accepted v1.1 architecture
+- [`docs/SPEC-v1.2.md`](docs/SPEC-v1.2.md) — accepted v1.2 learning steps
 - [`docs/SPEC-ci.md`](docs/SPEC-ci.md) — accepted CI spec
 - [`docs/adr/`](docs/adr/) — architecture decisions
 - [`.cursor/skills/do-work/SKILL.md`](.cursor/skills/do-work/SKILL.md) — how Full Stack implements issues / PRs
