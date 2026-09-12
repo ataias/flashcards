@@ -1,6 +1,6 @@
 # Flashcards v1 — Spec
 
-Status: **accepted** (grilled 2026-09-11; Again min-interval clarified 2026-09-11). Implementation largely complete; closeout = parent issues + acceptance smoke.
+Status: **completed** (grilled 2026-09-11; Again min-interval clarified 2026-09-11; smoke-tested on `main` 2026-09-12; parent #1 closed).
 
 Domain language lives in [`CONTEXT.md`](../CONTEXT.md). Hard decisions: [`docs/adr/`](adr/).
 
