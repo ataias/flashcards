@@ -35,6 +35,30 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 | `FLASHCARDS_DB` | `./data/flashcards.db` | SQLite path (`data/` is created if missing) |
 | `FLASHCARDS_BIND` | `127.0.0.1:3000` | Listen address (e.g. `0.0.0.0:3000`) |
 
+## Deploy
+
+The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile).
+
+[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`).
+
+```bash
+docker pull ghcr.io/ataias/flashcards:latest
+docker run --rm -p 3000:3000 -v flashcards-data:/data ghcr.io/ataias/flashcards:latest
+# open http://127.0.0.1:3000
+```
+
+| Variable | Image default | Meaning |
+| --- | --- | --- |
+| `FLASHCARDS_BIND` | `0.0.0.0:3000` | Listen address (all interfaces so the published port works) |
+| `FLASHCARDS_DB` | `/data/flashcards.db` | SQLite path (mount a volume on `/data`) |
+
+Build locally from the repo root:
+
+```bash
+docker build -f deploy/Containerfile -t flashcards:local .
+docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
+```
+
 ## Use
 
 1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. With no Decks, home shows an empty list and a create-Deck form.

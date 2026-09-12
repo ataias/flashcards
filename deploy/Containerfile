@@ -1,0 +1,47 @@
+# Runtime app image. Distinct from the root CI toolchain Containerfile.
+# Build from the repo root:
+#   docker build -f deploy/Containerfile -t flashcards:local .
+#
+# Rust pin matches rust-toolchain.toml / the CI image (channel 1.98.1).
+
+FROM rust:1.98.1-bookworm AS builder
+
+WORKDIR /src
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libsqlite3-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+
+RUN cargo build --release --locked --bin flashcards
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 1000 --create-home --home-dir /home/flashcards flashcards \
+    && mkdir -p /data \
+    && chown flashcards:flashcards /data
+
+# ServeDir uses CARGO_MANIFEST_DIR baked in at compile time (/src/crates/web).
+COPY --from=builder /src/crates/web/static /src/crates/web/static
+COPY --from=builder /src/target/release/flashcards /usr/local/bin/flashcards
+
+# Image defaults: listen on all interfaces; SQLite on a writable volume.
+ENV FLASHCARDS_BIND=0.0.0.0:3000
+ENV FLASHCARDS_DB=/data/flashcards.db
+
+EXPOSE 3000
+VOLUME ["/data"]
+
+USER flashcards
+WORKDIR /home/flashcards
+
+CMD ["flashcards"]
