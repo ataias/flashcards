@@ -35,6 +35,14 @@ pub enum Error {
     IncompleteFsrs {
         card_id: i64,
     },
+    InvalidPhase {
+        card_id: i64,
+        value: String,
+    },
+    InvalidLearningStep {
+        card_id: i64,
+        value: i64,
+    },
     EmptyDeckName,
     EmptyCardFront,
     EmptyCardBack,
@@ -63,10 +71,13 @@ impl std::fmt::Display for Error {
                 write!(f, "invalid timestamp `{value}`: {source}")
             }
             Self::IncompleteFsrs { card_id } => {
-                write!(
-                    f,
-                    "card {card_id} has incomplete FSRS fields (New Card requires all NULL)"
-                )
+                write!(f, "card {card_id} has incomplete FSRS fields")
+            }
+            Self::InvalidPhase { card_id, value } => {
+                write!(f, "card {card_id} has invalid phase `{value}`")
+            }
+            Self::InvalidLearningStep { card_id, value } => {
+                write!(f, "card {card_id} has invalid learning_step {value}")
             }
             Self::EmptyDeckName => write!(f, "Deck name cannot be empty"),
             Self::EmptyCardFront => write!(f, "Card front cannot be empty"),
@@ -86,6 +97,8 @@ impl std::error::Error for Error {
             Self::Schedule(err) => Some(err),
             Self::InvalidTimestamp { source, .. } => Some(source),
             Self::IncompleteFsrs { .. }
+            | Self::InvalidPhase { .. }
+            | Self::InvalidLearningStep { .. }
             | Self::EmptyDeckName
             | Self::EmptyCardFront
             | Self::EmptyCardBack
@@ -277,8 +290,8 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
     now_local: DateTime<Tz>,
 ) -> Result<Vec<DeckSummary>, Error> {
     let now_utc = now_local.with_timezone(&Utc);
-    let rows = sqlx::query_as::<_, (i64, String, Option<i64>, Option<f64>, Option<String>)>(
-        "SELECT decks.id, decks.name, cards.id, cards.stability, cards.due
+    let rows = sqlx::query_as::<_, (i64, String, Option<i64>, Option<String>, Option<String>)>(
+        "SELECT decks.id, decks.name, cards.id, cards.phase, cards.due
          FROM decks
          LEFT JOIN cards ON cards.deck_id = decks.id
          ORDER BY decks.id",
@@ -306,7 +319,7 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
 
     let mut order = Vec::new();
     let mut by_deck: HashMap<i64, DeckSummary> = HashMap::new();
-    for (id, name, card_id, stability, due) in rows {
+    for (id, name, card_id, phase, due) in rows {
         let summary = by_deck.entry(id).or_insert_with(|| {
             order.push(id);
             DeckSummary {
@@ -315,13 +328,19 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
                 new_count: 0,
             }
         });
-        match (card_id, stability, due) {
+        match (card_id, phase.as_deref(), due.as_deref()) {
             (None, _, _) => {}
-            (Some(_), None, None) => summary.new_count += 1,
-            (Some(_), _, Some(due)) => {
-                if domain::is_due_at(parse_utc(&due)?, now_utc) {
+            (Some(_), Some("new"), _) => summary.new_count += 1,
+            (Some(_), Some("learning" | "review" | "relearning"), Some(due)) => {
+                if domain::is_due_at(parse_utc(due)?, now_utc) {
                     summary.due_count += 1;
                 }
+            }
+            (Some(card_id), Some(phase), _) => {
+                return Err(Error::InvalidPhase {
+                    card_id,
+                    value: phase.to_string(),
+                });
             }
             (Some(card_id), _, _) => return Err(Error::IncompleteFsrs { card_id }),
         }
@@ -345,6 +364,8 @@ type CardRow = (
     i64,
     String,
     String,
+    String,
+    Option<i64>,
     Option<f64>,
     Option<f64>,
     Option<String>,
@@ -360,7 +381,7 @@ where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let row = sqlx::query_as::<_, CardRow>(
-        "SELECT id, deck_id, front, back, stability, difficulty, due, last_review
+        "SELECT id, deck_id, front, back, phase, learning_step, stability, difficulty, due, last_review
          FROM cards WHERE id = ?",
     )
     .bind(card_id)
@@ -371,7 +392,7 @@ where
 
 pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<Card>, Error> {
     let rows = sqlx::query_as::<_, CardRow>(
-        "SELECT id, deck_id, front, back, stability, difficulty, due, last_review
+        "SELECT id, deck_id, front, back, phase, learning_step, stability, difficulty, due, last_review
          FROM cards WHERE deck_id = ? ORDER BY id",
     )
     .bind(deck_id)
@@ -448,7 +469,7 @@ pub async fn update_card(
     let back = normalize_card_side(back, false)?;
     let row = sqlx::query_as::<_, CardRow>(
         "UPDATE cards SET front = ?, back = ? WHERE id = ?
-         RETURNING id, deck_id, front, back, stability, difficulty, due, last_review",
+         RETURNING id, deck_id, front, back, phase, learning_step, stability, difficulty, due, last_review",
     )
     .bind(&front)
     .bind(&back)
@@ -572,18 +593,17 @@ async fn write_review_on(
 ) -> Result<(), Error> {
     let due = card.due.map(rfc3339);
     let last_review = card.last_review.map(rfc3339);
-    // Existing CHECK ties memory to due. Phase/step columns land in the db
-    // follow-up; Learning rows need a stand-in until then.
     let (stability, difficulty) = match card.memory {
         Some(memory) => (Some(memory.stability), Some(memory.difficulty)),
-        None if card.due.is_some() => (Some(0.0), Some(0.0)),
         None => (None, None),
     };
     sqlx::query(
         "UPDATE cards
-         SET stability = ?, difficulty = ?, due = ?, last_review = ?
+         SET phase = ?, learning_step = ?, stability = ?, difficulty = ?, due = ?, last_review = ?
          WHERE id = ?",
     )
+    .bind(phase_to_db(card.phase))
+    .bind(card.learning_step.map(|step| step as i64))
     .bind(stability)
     .bind(difficulty)
     .bind(due.as_deref())
@@ -613,8 +633,45 @@ fn parse_utc(value: &str) -> Result<DateTime<Utc>, Error> {
         })
 }
 
+fn phase_to_db(phase: domain::Phase) -> &'static str {
+    match phase {
+        domain::Phase::New => "new",
+        domain::Phase::Learning => "learning",
+        domain::Phase::Review => "review",
+        domain::Phase::Relearning => "relearning",
+    }
+}
+
+fn phase_from_db(card_id: i64, value: &str) -> Result<domain::Phase, Error> {
+    match value {
+        "new" => Ok(domain::Phase::New),
+        "learning" => Ok(domain::Phase::Learning),
+        "review" => Ok(domain::Phase::Review),
+        "relearning" => Ok(domain::Phase::Relearning),
+        _ => Err(Error::InvalidPhase {
+            card_id,
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn learning_step_from_db(card_id: i64, value: Option<i64>) -> Result<Option<usize>, Error> {
+    match value {
+        None => Ok(None),
+        Some(step) => usize::try_from(step)
+            .map(Some)
+            .map_err(|_| Error::InvalidLearningStep {
+                card_id,
+                value: step,
+            }),
+    }
+}
+
 fn card_from_row(row: CardRow) -> Result<Card, Error> {
-    let (id, deck_id, front, back, stability, difficulty, due, last_review) = row;
+    let (id, deck_id, front, back, phase, learning_step, stability, difficulty, due, last_review) =
+        row;
+    let phase = phase_from_db(id, &phase)?;
+    let learning_step = learning_step_from_db(id, learning_step)?;
     let memory = match (stability, difficulty) {
         (None, None) => None,
         (Some(stability), Some(difficulty)) => Some(domain::MemoryState {
@@ -625,12 +682,6 @@ fn card_from_row(row: CardRow) -> Result<Card, Error> {
     };
     let due = due.as_deref().map(parse_utc).transpose()?;
     let last_review = last_review.as_deref().map(parse_utc).transpose()?;
-    let (phase, learning_step) = match (&memory, &due, &last_review) {
-        (None, None, None) => (domain::Phase::New, None),
-        (None, Some(_), Some(_)) => (domain::Phase::Learning, Some(0)),
-        (Some(_), Some(_), Some(_)) => (domain::Phase::Review, None),
-        _ => return Err(Error::IncompleteFsrs { card_id: id }),
-    };
     Ok(Card {
         id,
         deck_id,
@@ -878,9 +929,20 @@ mod tests {
         let updated = get_card(&pool, card_id).await.unwrap().unwrap();
         assert!(!updated.is_new());
         assert_eq!(rated.phase, domain::Phase::Learning);
+        assert_eq!(rated.learning_step, Some(1));
+        assert_eq!(rated.memory, None);
+        assert_eq!(updated.phase, domain::Phase::Learning);
+        assert_eq!(updated.learning_step, Some(1));
+        assert_eq!(updated.memory, None);
         assert_eq!(updated.due, Some(now + domain::LEARNING_STEPS[1]));
         assert_eq!(updated.last_review, Some(now));
         assert_eq!(updated.due, rated.due);
+        let stability: Option<f64> = sqlx::query_scalar("SELECT stability FROM cards WHERE id = ?")
+            .bind(card_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stability, None);
         assert_eq!(count(&pool, "review_logs").await, 1);
     }
 
@@ -1214,6 +1276,9 @@ mod tests {
             .unwrap();
         let stored = domain::get_card(&store, card.id).await.unwrap().unwrap();
         assert!(!stored.is_new());
+        assert_eq!(stored.phase, domain::Phase::Learning);
+        assert_eq!(stored.learning_step, Some(1));
+        assert_eq!(stored.memory, None);
 
         domain::delete_deck(&store, seeded[0].deck.id)
             .await
@@ -1230,5 +1295,172 @@ mod tests {
                 .unwrap_err(),
             domain::Error::CardNotFound { card_id } if card_id == card.id
         ));
+    }
+
+    async fn apply_migrations_through(pool: &SqlitePool, version: i64) {
+        use sqlx::migrate::Migrate;
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in MIGRATOR.iter() {
+            if migration.version > version {
+                break;
+            }
+            conn.apply(migration).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn get_card_after_rate_keeps_learning_phase_and_step() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let card_id = insert_card(&pool, deck_id).await;
+        let card = get_card(&pool, card_id).await.unwrap().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+
+        let rated = rate_card(&pool, &card, Rating::Again, now).await.unwrap();
+        let stored = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert_eq!(rated.phase, domain::Phase::Learning);
+        assert_eq!(rated.learning_step, Some(0));
+        assert_eq!(rated.memory, None);
+        assert_eq!(stored, rated);
+        assert_eq!(stored.due, Some(now + domain::LEARNING_STEPS[0]));
+
+        let later = now + domain::LEARNING_STEPS[0];
+        let advanced = rate_card(&pool, &stored, Rating::Good, later)
+            .await
+            .unwrap();
+        let stored = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert_eq!(advanced.phase, domain::Phase::Learning);
+        assert_eq!(advanced.learning_step, Some(1));
+        assert_eq!(advanced.memory, None);
+        assert_eq!(stored, advanced);
+    }
+
+    #[tokio::test]
+    async fn get_card_after_review_again_keeps_relearning() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let card_id = insert_card(&pool, deck_id).await;
+        let card = get_card(&pool, card_id).await.unwrap().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        rate_card(&pool, &card, Rating::Easy, now).await.unwrap();
+        let review = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert_eq!(review.phase, domain::Phase::Review);
+
+        let later = now + chrono::Duration::days(1);
+        let rated = rate_card(&pool, &review, Rating::Again, later)
+            .await
+            .unwrap();
+        let stored = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert_eq!(rated.phase, domain::Phase::Relearning);
+        assert_eq!(rated.learning_step, Some(0));
+        assert!(rated.memory.is_some());
+        assert_eq!(rated.due, Some(later + domain::RELEARNING_STEPS[0]));
+        assert_eq!(stored, rated);
+    }
+
+    #[tokio::test]
+    async fn store_commit_review_round_trips_learning_fields() {
+        let store = SqliteStore::new(open_memory().await);
+        let deck = domain::create_deck(&store, "Default").await.unwrap();
+        let card = domain::create_card(&store, deck.id, "Q", "A")
+            .await
+            .unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let (updated, entry) = card.apply_rating(Rating::Good, now).unwrap();
+        store.commit_review(&updated, &entry).await.unwrap();
+
+        let stored = domain::get_card(&store, card.id).await.unwrap().unwrap();
+        assert_eq!(stored.phase, domain::Phase::Learning);
+        assert_eq!(stored.learning_step, Some(1));
+        assert_eq!(stored.memory, None);
+        assert_eq!(stored.due, Some(now + domain::LEARNING_STEPS[1]));
+        assert_eq!(stored.last_review, Some(now));
+    }
+
+    #[tokio::test]
+    async fn open_backfills_phase_from_memory_and_does_not_reseed() {
+        let path = temp_db_path();
+        remove_db(&path);
+
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        apply_migrations_through(&pool, 2).await;
+        ensure_default_deck(&pool).await.unwrap();
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let new_id = insert_card(&pool, deck_id).await;
+        let review_id: i64 = sqlx::query_scalar(
+            "INSERT INTO cards (deck_id, front, back, stability, difficulty, due, last_review)
+             VALUES (?, 'q', 'a', 2.0, 5.0, '2026-09-11T12:00:00Z', '2026-09-10T12:00:00Z')
+             RETURNING id",
+        )
+        .bind(deck_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = open(&path).await.unwrap();
+        let decks = list_decks(&pool).await.unwrap();
+        assert_eq!(decks.len(), 1);
+        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
+
+        let new_card = get_card(&pool, new_id).await.unwrap().unwrap();
+        assert_eq!(new_card.phase, domain::Phase::New);
+        assert_eq!(new_card.learning_step, None);
+        assert_eq!(new_card.memory, None);
+
+        let review = get_card(&pool, review_id).await.unwrap().unwrap();
+        assert_eq!(review.phase, domain::Phase::Review);
+        assert_eq!(review.learning_step, None);
+        assert!(review.memory.is_some());
+
+        pool.close().await;
+        remove_db(&path);
+    }
+
+    #[tokio::test]
+    async fn learning_due_without_memory_is_allowed() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO cards (deck_id, front, back, phase, learning_step, due, last_review)
+             VALUES (?, 'f', 'b', 'learning', 0, '2026-09-11T12:01:00Z', '2026-09-11T12:00:00Z')
+             RETURNING id",
+        )
+        .bind(deck_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let card = get_card(&pool, id).await.unwrap().unwrap();
+        assert_eq!(card.phase, domain::Phase::Learning);
+        assert_eq!(card.learning_step, Some(0));
+        assert_eq!(card.memory, None);
+    }
+
+    #[tokio::test]
+    async fn review_without_memory_is_rejected() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let err = sqlx::query(
+            "INSERT INTO cards (deck_id, front, back, phase, due, last_review)
+             VALUES (?, 'f', 'b', 'review', '2026-09-11T12:00:00Z', '2026-09-11T12:00:00Z')",
+        )
+        .bind(deck_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("CHECK") || msg.contains("constraint"),
+            "expected CHECK failure, got {msg}"
+        );
     }
 }
