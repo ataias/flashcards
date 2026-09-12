@@ -384,7 +384,7 @@ async fn apply_review_on(
 }
 
 /// Re-fetches the Card inside the write transaction so `schedule` uses the
-/// row being updated, not a possibly stale caller-held copy (#18 should-fix).
+/// row being updated, not a possibly stale caller-held copy.
 pub async fn rate_card(
     pool: &SqlitePool,
     card: &Card,
