@@ -1,4 +1,3 @@
-# Toolchain comes from the root Containerfile; app sources are checked out here.
 name: CI
 
 on:
