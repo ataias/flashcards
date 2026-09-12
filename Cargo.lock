@@ -445,6 +445,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
+name = "flashcards"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "db",
+ "tempfile",
+ "tokio",
+ "tower",
+ "web",
+]
+
+[[package]]
 name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2179,11 +2192,9 @@ dependencies = [
  "askama",
  "axum",
  "chrono",
- "db",
+ "domain",
  "serde",
- "tempfile",
  "tokio",
- "tower",
  "tower-http",
 ]
 

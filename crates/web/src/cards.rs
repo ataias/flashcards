@@ -2,7 +2,7 @@ use askama::Template;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use db::SqlitePool;
+use domain::Store;
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -88,24 +88,24 @@ pub struct CardForm {
     back: String,
 }
 
-pub async fn deck_page(
-    State(pool): State<SqlitePool>,
+pub async fn deck_page<S: Store>(
+    State(store): State<S>,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    render_deck_page(&pool, deck_id, None, CardDraft::default()).await
+    render_deck_page(&store, deck_id, None, CardDraft::default()).await
 }
 
-pub async fn create_card(
-    State(pool): State<SqlitePool>,
+pub async fn create_card<S: Store>(
+    State(store): State<S>,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match db::create_card(&pool, deck_id, &form.front, &form.back).await {
-        Ok(_) => after_change(&pool, deck_id, &headers, None, CardDraft::default()).await,
-        Err(db::Error::EmptyCardFront) => {
+    match domain::create_card(&store, deck_id, &form.front, &form.back).await {
+        Ok(_) => after_change(&store, deck_id, &headers, None, CardDraft::default()).await,
+        Err(domain::Error::EmptyCardFront) => {
             after_change(
-                &pool,
+                &store,
                 deck_id,
                 &headers,
                 Some("Card front cannot be empty."),
@@ -113,9 +113,9 @@ pub async fn create_card(
             )
             .await
         }
-        Err(db::Error::EmptyCardBack) => {
+        Err(domain::Error::EmptyCardBack) => {
             after_change(
-                &pool,
+                &store,
                 deck_id,
                 &headers,
                 Some("Card back cannot be empty."),
@@ -123,22 +123,22 @@ pub async fn create_card(
             )
             .await
         }
-        Err(db::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-pub async fn update_card(
-    State(pool): State<SqlitePool>,
+pub async fn update_card<S: Store>(
+    State(store): State<S>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match db::update_card(&pool, card_id, &form.front, &form.back).await {
-        Ok(card) => after_change(&pool, card.deck_id, &headers, None, CardDraft::default()).await,
-        Err(db::Error::EmptyCardFront) => {
+    match domain::update_card(&store, card_id, &form.front, &form.back).await {
+        Ok(card) => after_change(&store, card.deck_id, &headers, None, CardDraft::default()).await,
+        Err(domain::Error::EmptyCardFront) => {
             card_error(
-                &pool,
+                &store,
                 card_id,
                 &headers,
                 "Card front cannot be empty.",
@@ -146,9 +146,9 @@ pub async fn update_card(
             )
             .await
         }
-        Err(db::Error::EmptyCardBack) => {
+        Err(domain::Error::EmptyCardBack) => {
             card_error(
-                &pool,
+                &store,
                 card_id,
                 &headers,
                 "Card back cannot be empty.",
@@ -156,35 +156,35 @@ pub async fn update_card(
             )
             .await
         }
-        Err(db::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-pub async fn delete_card(
-    State(pool): State<SqlitePool>,
+pub async fn delete_card<S: Store>(
+    State(store): State<S>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    match db::delete_card(&pool, card_id).await {
-        Ok(deck_id) => after_change(&pool, deck_id, &headers, None, CardDraft::default()).await,
-        Err(db::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+    match domain::delete_card(&store, card_id).await {
+        Ok(deck_id) => after_change(&store, deck_id, &headers, None, CardDraft::default()).await,
+        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-async fn card_error(
-    pool: &SqlitePool,
+async fn card_error<S: Store>(
+    store: &S,
     card_id: i64,
     headers: &HeaderMap,
     error: &str,
     form: &CardForm,
 ) -> Result<Response, AppError> {
-    let Some(card) = db::get_card(pool, card_id).await? else {
+    let Some(card) = domain::get_card(store, card_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     after_change(
-        pool,
+        store,
         card.deck_id,
         headers,
         Some(error),
@@ -193,37 +193,40 @@ async fn card_error(
     .await
 }
 
-async fn after_change(
-    pool: &SqlitePool,
+async fn after_change<S: Store>(
+    store: &S,
     deck_id: i64,
     headers: &HeaderMap,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_cards(pool, deck_id, error, draft).await
+        render_cards(store, deck_id, error, draft).await
     } else if error.is_some() {
-        render_deck_page(pool, deck_id, error, draft).await
+        render_deck_page(store, deck_id, error, draft).await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}")).into_response())
     }
 }
 
-async fn render_deck_page(
-    pool: &SqlitePool,
+async fn render_deck_page<S: Store>(
+    store: &S,
     deck_id: i64,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let Some(deck) = db::get_deck(pool, deck_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+    let (deck, cards) = match domain::list_deck_cards(store, deck_id).await {
+        Ok(loaded) => loaded,
+        Err(domain::Error::DeckNotFound { .. }) => {
+            return Ok(StatusCode::NOT_FOUND.into_response());
+        }
+        Err(err) => return Err(err.into()),
     };
-    let cards = load_rows(pool, deck_id).await?;
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
             deck_name: deck.name,
-            cards,
+            cards: card_rows(cards),
             error: error.map(str::to_string),
             draft,
         }
@@ -232,20 +235,23 @@ async fn render_deck_page(
     .into_response())
 }
 
-async fn render_cards(
-    pool: &SqlitePool,
+async fn render_cards<S: Store>(
+    store: &S,
     deck_id: i64,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    if db::get_deck(pool, deck_id).await?.is_none() {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    }
-    let cards = load_rows(pool, deck_id).await?;
+    let cards = match domain::list_deck_cards(store, deck_id).await {
+        Ok((_, cards)) => cards,
+        Err(domain::Error::DeckNotFound { .. }) => {
+            return Ok(StatusCode::NOT_FOUND.into_response());
+        }
+        Err(err) => return Err(err.into()),
+    };
     Ok(Html(
         CardsTemplate {
             deck_id,
-            cards,
+            cards: card_rows(cards),
             error: error.map(str::to_string),
             draft,
         }
@@ -254,14 +260,13 @@ async fn render_cards(
     .into_response())
 }
 
-async fn load_rows(pool: &SqlitePool, deck_id: i64) -> Result<Vec<CardRow>, AppError> {
-    let cards = db::list_card_text_in_deck(pool, deck_id).await?;
-    Ok(cards
+fn card_rows(cards: Vec<domain::CardText>) -> Vec<CardRow> {
+    cards
         .into_iter()
         .map(|card| CardRow {
             id: card.id,
             front: card.front,
             back: card.back,
         })
-        .collect())
+        .collect()
 }

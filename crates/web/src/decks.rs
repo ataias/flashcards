@@ -3,7 +3,7 @@ use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::Local;
-use db::SqlitePool;
+use domain::Store;
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -35,68 +35,68 @@ pub struct DeckNameForm {
     name: String,
 }
 
-pub async fn home(State(pool): State<SqlitePool>) -> Result<Response, AppError> {
-    render_home(&pool, None).await
+pub async fn home<S: Store>(State(store): State<S>) -> Result<Response, AppError> {
+    render_home(&store, None).await
 }
 
-pub async fn create_deck(
-    State(pool): State<SqlitePool>,
+pub async fn create_deck<S: Store>(
+    State(store): State<S>,
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
-    match db::create_deck(&pool, &form.name).await {
-        Ok(_) => after_change(&pool, &headers, None).await,
-        Err(db::Error::EmptyDeckName) => {
-            after_change(&pool, &headers, Some("Deck name cannot be empty.")).await
+    match domain::create_deck(&store, &form.name).await {
+        Ok(_) => after_change(&store, &headers, None).await,
+        Err(domain::Error::EmptyDeckName) => {
+            after_change(&store, &headers, Some("Deck name cannot be empty.")).await
         }
         Err(err) => Err(err.into()),
     }
 }
 
-pub async fn rename_deck(
-    State(pool): State<SqlitePool>,
+pub async fn rename_deck<S: Store>(
+    State(store): State<S>,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
-    match db::rename_deck(&pool, deck_id, &form.name).await {
-        Ok(_) => after_change(&pool, &headers, None).await,
-        Err(db::Error::EmptyDeckName) => {
-            after_change(&pool, &headers, Some("Deck name cannot be empty.")).await
+    match domain::rename_deck(&store, deck_id, &form.name).await {
+        Ok(_) => after_change(&store, &headers, None).await,
+        Err(domain::Error::EmptyDeckName) => {
+            after_change(&store, &headers, Some("Deck name cannot be empty.")).await
         }
-        Err(db::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-pub async fn delete_deck(
-    State(pool): State<SqlitePool>,
+pub async fn delete_deck<S: Store>(
+    State(store): State<S>,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    match db::delete_deck(&pool, deck_id).await {
-        Ok(()) => after_change(&pool, &headers, None).await,
-        Err(db::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+    match domain::delete_deck(&store, deck_id).await {
+        Ok(()) => after_change(&store, &headers, None).await,
+        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-async fn after_change(
-    pool: &SqlitePool,
+async fn after_change<S: Store>(
+    store: &S,
     headers: &HeaderMap,
     error: Option<&str>,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_decks(pool, error).await
+        render_decks(store, error).await
     } else if error.is_some() {
-        render_home(pool, error).await
+        render_home(store, error).await
     } else {
         Ok(Redirect::to("/").into_response())
     }
 }
 
-async fn render_home(pool: &SqlitePool, error: Option<&str>) -> Result<Response, AppError> {
-    let decks = load_rows(pool).await?;
+async fn render_home<S: Store>(store: &S, error: Option<&str>) -> Result<Response, AppError> {
+    let decks = load_rows(store).await?;
     Ok(Html(
         HomeTemplate {
             decks,
@@ -107,8 +107,8 @@ async fn render_home(pool: &SqlitePool, error: Option<&str>) -> Result<Response,
     .into_response())
 }
 
-async fn render_decks(pool: &SqlitePool, error: Option<&str>) -> Result<Response, AppError> {
-    let decks = load_rows(pool).await?;
+async fn render_decks<S: Store>(store: &S, error: Option<&str>) -> Result<Response, AppError> {
+    let decks = load_rows(store).await?;
     Ok(Html(
         DecksTemplate {
             decks,
@@ -119,8 +119,8 @@ async fn render_decks(pool: &SqlitePool, error: Option<&str>) -> Result<Response
     .into_response())
 }
 
-async fn load_rows(pool: &SqlitePool) -> Result<Vec<DeckRow>, AppError> {
-    let summaries = db::list_deck_summaries(pool, Local::now()).await?;
+async fn load_rows<S: Store>(store: &S) -> Result<Vec<DeckRow>, AppError> {
+    let summaries = domain::list_home(store, Local::now()).await?;
     Ok(summaries
         .into_iter()
         .map(|summary| DeckRow {
