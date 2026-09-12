@@ -12,6 +12,9 @@
   </form>
 
   <h2>Decks</h2>
+  {% if decks.is_empty() %}
+  <p class="empty">No Decks yet. Create one to add Cards or study.</p>
+  {% else %}
   <ul class="deck-list">
     {% for deck in decks %}
     <li>
@@ -33,4 +36,5 @@
     </li>
     {% endfor %}
   </ul>
+  {% endif %}
 </section>

@@ -61,6 +61,8 @@ Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
 
+**Basic regression proof:** For refactor / architecture / wiring PRs, follow [`regression-proof.md`](./regression-proof.md) in the Test plan. UI visual-proof rules above still apply when behavior is user-visible.
+
 ## 6. Open the PR
 
 - Base: `main` (or the stacked parent branch when stacking).
@@ -68,7 +70,7 @@ Until CI exists, still require fmt / clippy / test / build.
 - Body must include:
   - Summary of what changed
   - `Fixes #N` (body only — never in the title)
-  - **Test plan** (commands you ran; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
+  - **Test plan** (commands you ran; name the HTTP/integration suite that still proves the app — do not N/A wiring-only without naming it; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
   - **SPEC/CONTEXT deviations** (or `none`)
   - Stacking notes when base ≠ `main`
 - Use `.github/PULL_REQUEST_TEMPLATE.md` when present.
@@ -83,8 +85,10 @@ Stacked PRs go stale when `main` (or a lower stack branch) moves. **Check before
    - If it is behind its intended base, **rebase** onto that base (not merge).
    - Push with `--force-with-lease` only (never bare `--force`).
 4. Keep GitHub PR **base** branches correct after rebases (tip still targets the parent stack branch; bottom targets `main`).
-5. Re-run §5 checks on the tip after the full stack rebase.
-6. If rebase conflicts are non-trivial or change behavior, stop and ping **Architect**.
+5. **Every open stack must include a PR with base = `main` (the bottom).** Never leave orphan tips whose parent PRs are closed.
+6. Do **not** close stacked PRs, retarget a mid-stack tip onto `main` as a mega-diff, or force-push / reset a parent stack branch onto `main`. Only Ataias closes or merges. If `gh stack` 403s or would close/destroy parents, stop and set bases with `gh pr edit --base` (or the API) instead.
+7. Re-run §5 checks on the tip after the full stack rebase.
+8. If rebase conflicts are non-trivial or change behavior, stop and ping **Architect**.
 
 Do **not** open a fresh PR to “fix” a rebase — update the existing issue branch.
 

@@ -13,6 +13,7 @@ Fixes #
 - [ ] `cargo build --workspace`
 - [ ] lychee relative (when available)
 - [ ] `.sqlx/` updated if queries changed
+- [ ] Name regression tests / HTTP suite (e.g. `crates/flashcards/tests/http.rs`); do not N/A wiring-only without naming them
 - [ ] UI visual proof (screenshots and/or short video) in this Test plan — required for UI-facing PRs; N/A for CI-only / non-UI
 
 ## SPEC / CONTEXT deviations

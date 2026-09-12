@@ -69,6 +69,7 @@ async fn index_lists_default_deck_and_local_static() {
         db::list_decks(&db.pool).await.unwrap()[0].id
     )));
     assert!(html.contains("hx-confirm"));
+    assert!(!html.contains("No Decks yet"));
     assert!(html.contains("/static/htmx.min.js"));
     assert!(html.contains("/static/app.css"));
     assert!(!html.contains("cdn.jsdelivr"));
@@ -147,8 +148,36 @@ async fn htmx_create_rename_delete_last_deck_leaves_empty() {
     assert_eq!(status, StatusCode::OK);
     assert!(!html.contains("Italiano"));
     assert!(!html.contains("Default"));
+    assert!(!html.contains("recreate"));
     assert!(html.contains("New Deck"));
+    assert!(html.contains("No Decks yet. Create one to add Cards or study."));
+    assert!(html.contains("class=\"create-deck\""));
     assert!(db::list_decks(pool).await.unwrap().is_empty());
+
+    let (status, html) = post_form(app(&db), "/decks", "name=Japanese", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Japanese"));
+    assert!(!html.contains("No Decks yet"));
+    assert!(!html.contains("Default"));
+    assert!(html.contains("due 0"));
+    assert!(html.contains("new 0"));
+}
+
+#[tokio::test]
+async fn home_empty_when_zero_decks_shows_create_form() {
+    let db = test_db().await;
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+    db::delete_deck(&db.pool, deck_id).await.unwrap();
+
+    let (status, html) = get(app(&db), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Decks yet. Create one to add Cards or study."));
+    assert!(html.contains("New Deck"));
+    assert!(html.contains("class=\"create-deck\""));
+    assert!(html.contains("hx-post=\"/decks\""));
+    assert!(!html.contains("Default"));
+    assert!(!html.contains("recreate"));
+    assert!(!html.contains("class=\"deck-list\""));
 }
 
 #[tokio::test]
