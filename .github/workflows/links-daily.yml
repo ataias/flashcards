@@ -1,16 +1,13 @@
-# Daily external link check (SPEC-ci).
 # Toolchain comes from the root Containerfile; app sources are checked out here.
-# ci.yml is not required — this workflow builds the same image the same way (#14).
+# ci.yml is not required — this workflow builds the same image the same way.
 name: Links daily
 
 on:
   schedule:
-    # 06:00 UTC (SPEC-ci).
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-# contents: read is the SPEC-ci hygiene baseline. actions: write is required
-# so docker/build-push-action (type=gha) can persist layer cache (same as #14).
+# actions: write is required so docker/build-push-action (type=gha) can persist layer cache.
 permissions:
   contents: read
   actions: write
