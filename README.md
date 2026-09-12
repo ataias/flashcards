@@ -38,9 +38,11 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 
 ## Deploy
 
-The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile).
+The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile): it **packs a prebuilt binary** (no `cargo` in that image build).
 
-[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images.
+[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) publishes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images.
+
+Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**.
 
 Confirm architectures after publish:
 
@@ -59,9 +61,13 @@ docker run --rm -p 3000:3000 -v flashcards-data:/data ghcr.io/ataias/flashcards:
 | `FLASHCARDS_BIND` | `0.0.0.0:3000` | Listen address (all interfaces so the published port works) |
 | `FLASHCARDS_DB` | `/data/flashcards.db` | SQLite path (mount a volume on `/data`) |
 
-Build locally from the repo root:
+Build locally from the repo root. Compile at `/src` so ServeDir’s baked `CARGO_MANIFEST_DIR` matches the image, then pack (`amd64` on x86_64 hosts; use `deploy/bin/arm64` on aarch64):
 
 ```bash
+docker run --rm -v "$PWD":/src -w /src rust:1.98.1-bookworm \
+  bash -lc 'apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev pkg-config && cargo build --release --locked --bin flashcards'
+mkdir -p deploy/bin/amd64
+cp target/release/flashcards deploy/bin/amd64/flashcards
 docker build -f deploy/Containerfile -t flashcards:local .
 docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 ```

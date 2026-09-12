@@ -14,14 +14,82 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  build-binary:
+    name: build ${{ matrix.docker_arch }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: rust:1.98.1-bookworm
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            docker_arch: amd64
+          - runner: ubuntu-24.04-arm
+            docker_arch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install SQLite headers
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libsqlite3-dev pkg-config
+
+      # ServeDir uses CARGO_MANIFEST_DIR baked at compile time. Building
+      # from /src keeps that path at /src/crates/web (matches the runtime image).
+      - name: Place sources at /src
+        run: |
+          set -euo pipefail
+          mkdir -p /src
+          cp -a "${GITHUB_WORKSPACE}/." /src/
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "/src"
+
+      - name: Build release binary
+        working-directory: /src
+        run: cargo build --release --locked --bin flashcards
+
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: flashcards-${{ matrix.docker_arch }}
+          path: /src/target/release/flashcards
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: publish
+    needs: build-binary
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: flashcards-amd64
+          path: deploy/bin/amd64
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: flashcards-arm64
+          path: deploy/bin/arm64
+
+      - name: Mark binaries executable
+        run: |
+          set -euo pipefail
+          chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+          file deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+
+      # QEMU is only for the slim image's apt-get on arm64 (COPY-pack),
+      # not for compiling Rust.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -44,7 +112,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=,format=short
 
-      - name: Build and push
+      - name: Pack and push runtime images
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -53,3 +121,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Inspect multi-arch manifest
+        run: docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA::7}"
