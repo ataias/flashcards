@@ -26,7 +26,7 @@ RUN apt-get update \
         ca-certificates \
         libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 1000 --create-home --home-dir /home/flashcards flashcards \
+    && useradd --uid 1000 --create-home --home-dir /home/flashcards flashcards \
     && mkdir -p /data \
     && chown flashcards:flashcards /data
 

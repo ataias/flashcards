@@ -39,7 +39,7 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 
 The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile).
 
-[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch`. Tags: `latest` on `main`, plus the short commit SHA (for example `38b5b14`).
+[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`).
 
 ```bash
 docker pull ghcr.io/ataias/flashcards:latest
