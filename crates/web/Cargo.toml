@@ -5,8 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+askama = "0.16.1"
 axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 db = { path = "../db" }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 tower-http = { version = "0.6", features = ["fs"] }
 

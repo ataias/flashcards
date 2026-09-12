@@ -4,10 +4,11 @@ use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use domain::{Card, Rating, ScheduleError, ScheduledReview};
+use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{SqlitePool, migrate::Migrator};
 
-/// Deck name created when the database has zero Decks.
+pub use sqlx::SqlitePool;
+
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -16,6 +17,13 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 pub struct Deck {
     pub id: i64,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeckSummary {
+    pub deck: Deck,
+    pub due_count: usize,
+    pub new_count: usize,
 }
 
 #[derive(Debug)]
@@ -32,6 +40,13 @@ pub enum Error {
         source: chrono::ParseError,
     },
     IncompleteFsrs {
+        card_id: i64,
+    },
+    EmptyDeckName,
+    DeckNotFound {
+        deck_id: i64,
+    },
+    CardNotFound {
         card_id: i64,
     },
 }
@@ -58,6 +73,9 @@ impl std::fmt::Display for Error {
                     "card {card_id} has incomplete FSRS fields (New Card requires all NULL)"
                 )
             }
+            Self::EmptyDeckName => write!(f, "Deck name cannot be empty"),
+            Self::DeckNotFound { deck_id } => write!(f, "deck {deck_id} not found"),
+            Self::CardNotFound { card_id } => write!(f, "card {card_id} not found"),
         }
     }
 }
@@ -70,7 +88,10 @@ impl std::error::Error for Error {
             Self::Migrate(err) => Some(err),
             Self::Schedule(err) => Some(err),
             Self::InvalidTimestamp { source, .. } => Some(source),
-            Self::IncompleteFsrs { .. } => None,
+            Self::IncompleteFsrs { .. }
+            | Self::EmptyDeckName
+            | Self::DeckNotFound { .. }
+            | Self::CardNotFound { .. } => None,
         }
     }
 }
@@ -188,6 +209,66 @@ pub async fn list_decks(pool: &SqlitePool) -> Result<Vec<Deck>, Error> {
         .collect())
 }
 
+pub async fn get_deck(pool: &SqlitePool, deck_id: i64) -> Result<Option<Deck>, Error> {
+    let row = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM decks WHERE id = ?")
+        .bind(deck_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(id, name)| Deck { id, name }))
+}
+
+/// Create a Deck. Leading/trailing whitespace is trimmed; empty names are rejected.
+pub async fn create_deck(pool: &SqlitePool, name: &str) -> Result<Deck, Error> {
+    let name = normalize_deck_name(name)?;
+    let id = sqlx::query_scalar("INSERT INTO decks (name) VALUES (?) RETURNING id")
+        .bind(&name)
+        .fetch_one(pool)
+        .await?;
+    Ok(Deck { id, name })
+}
+
+/// Rename a Deck. Same name rules as [`create_deck`].
+pub async fn rename_deck(pool: &SqlitePool, deck_id: i64, name: &str) -> Result<Deck, Error> {
+    let name = normalize_deck_name(name)?;
+    let result = sqlx::query("UPDATE decks SET name = ? WHERE id = ?")
+        .bind(&name)
+        .bind(deck_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::DeckNotFound { deck_id });
+    }
+    Ok(Deck { id: deck_id, name })
+}
+
+fn normalize_deck_name(name: &str) -> Result<String, Error> {
+    let name = name.trim();
+    if name.is_empty() {
+        Err(Error::EmptyDeckName)
+    } else {
+        Ok(name.to_string())
+    }
+}
+
+pub async fn list_deck_summaries<Tz: TimeZone>(
+    pool: &SqlitePool,
+    now_local: DateTime<Tz>,
+) -> Result<Vec<DeckSummary>, Error> {
+    let decks = list_decks(pool).await?;
+    let mut summaries = Vec::with_capacity(decks.len());
+    for deck in decks {
+        let queue = study_queue(pool, deck.id, now_local.clone()).await?;
+        let due_count = queue.iter().filter(|card| !card.is_new()).count();
+        let new_count = queue.iter().filter(|card| card.is_new()).count();
+        summaries.push(DeckSummary {
+            deck,
+            due_count,
+            new_count,
+        });
+    }
+    Ok(summaries)
+}
+
 type CardRow = (
     i64,
     i64,
@@ -200,12 +281,19 @@ type CardRow = (
 );
 
 pub async fn get_card(pool: &SqlitePool, card_id: i64) -> Result<Option<Card>, Error> {
+    get_card_on(pool, card_id).await
+}
+
+async fn get_card_on<'e, E>(executor: E, card_id: i64) -> Result<Option<Card>, Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query_as::<_, CardRow>(
         "SELECT id, deck_id, front, back, stability, difficulty, due, last_review
          FROM cards WHERE id = ?",
     )
     .bind(card_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     row.map(card_from_row).transpose()
 }
@@ -261,6 +349,17 @@ pub async fn apply_review(
     rating: Rating,
 ) -> Result<(), Error> {
     let mut tx = pool.begin().await?;
+    apply_review_on(&mut tx, card_id, scheduled, rating).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn apply_review_on(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    card_id: i64,
+    scheduled: &ScheduledReview,
+    rating: Rating,
+) -> Result<(), Error> {
     let due = rfc3339(scheduled.due);
     let last_review = rfc3339(scheduled.last_review);
     sqlx::query(
@@ -273,26 +372,32 @@ pub async fn apply_review(
     .bind(&due)
     .bind(&last_review)
     .bind(card_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query("INSERT INTO review_logs (card_id, rated_at, rating) VALUES (?, ?, ?)")
         .bind(card_id)
         .bind(&last_review)
         .bind(rating.as_grade())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    tx.commit().await?;
     Ok(())
 }
 
+/// Re-fetches the Card inside the write transaction so `schedule` uses the
+/// row being updated, not a possibly stale caller-held copy.
 pub async fn rate_card(
     pool: &SqlitePool,
     card: &Card,
     rating: Rating,
     now: DateTime<Utc>,
 ) -> Result<ScheduledReview, Error> {
-    let scheduled = domain::schedule(card.memory, card.last_review, rating, now)?;
-    apply_review(pool, card.id, &scheduled, rating).await?;
+    let mut tx = pool.begin().await?;
+    let fresh = get_card_on(&mut *tx, card.id)
+        .await?
+        .ok_or(Error::CardNotFound { card_id: card.id })?;
+    let scheduled = domain::schedule(fresh.memory, fresh.last_review, rating, now)?;
+    apply_review_on(&mut tx, fresh.id, &scheduled, rating).await?;
+    tx.commit().await?;
     Ok(scheduled)
 }
 
@@ -597,5 +702,102 @@ mod tests {
         let queue = study_queue(&pool, deck_id, now).await.unwrap();
         assert_eq!(queue.len(), domain::NEW_CARDS_PER_LOCAL_DAY);
         assert!(queue.iter().all(Card::is_new));
+    }
+
+    #[tokio::test]
+    async fn create_deck_inserts_trimmed_name() {
+        let pool = open_memory().await;
+        let created = create_deck(&pool, "  Spanish  ").await.unwrap();
+        assert_eq!(created.name, "Spanish");
+        let fetched = get_deck(&pool, created.id).await.unwrap().unwrap();
+        assert_eq!(fetched, created);
+        let names: Vec<_> = list_decks(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(names.contains(&"Default".to_string()));
+        assert!(names.contains(&"Spanish".to_string()));
+    }
+
+    #[tokio::test]
+    async fn create_deck_rejects_empty_or_whitespace_name() {
+        let pool = open_memory().await;
+        assert!(matches!(
+            create_deck(&pool, "   ").await.unwrap_err(),
+            Error::EmptyDeckName
+        ));
+        assert_eq!(list_decks(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rename_deck_updates_name() {
+        let pool = open_memory().await;
+        let id = list_decks(&pool).await.unwrap()[0].id;
+        let renamed = rename_deck(&pool, id, "  Home  ").await.unwrap();
+        assert_eq!(renamed.name, "Home");
+        assert_eq!(list_decks(&pool).await.unwrap()[0].name, "Home");
+    }
+
+    #[tokio::test]
+    async fn rename_missing_deck_is_not_found() {
+        let pool = open_memory().await;
+        assert!(matches!(
+            rename_deck(&pool, 999, "Nope").await.unwrap_err(),
+            Error::DeckNotFound { deck_id: 999 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn list_deck_summaries_counts_due_and_new() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        insert_card(&pool, deck_id).await;
+        let card_id = insert_card(&pool, deck_id).await;
+        let card = get_card(&pool, card_id).await.unwrap().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        rate_card(&pool, &card, Rating::Good, now - chrono::Duration::days(30))
+            .await
+            .unwrap();
+
+        let summaries = list_deck_summaries(&pool, now).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].new_count, 1);
+        assert_eq!(summaries[0].due_count, 1);
+    }
+
+    #[tokio::test]
+    async fn rate_card_schedules_from_row_refetched_in_write_txn() {
+        let pool = open_memory().await;
+        let deck_id = list_decks(&pool).await.unwrap()[0].id;
+        let card_id = insert_card(&pool, deck_id).await;
+        let stale = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert!(stale.is_new());
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        rate_card(&pool, &stale, Rating::Good, now).await.unwrap();
+        let after_first = get_card(&pool, card_id).await.unwrap().unwrap();
+        assert!(!after_first.is_new());
+
+        let later = now + chrono::Duration::days(1);
+        let expected = domain::schedule(
+            after_first.memory,
+            after_first.last_review,
+            Rating::Good,
+            later,
+        )
+        .unwrap();
+        let from_stale =
+            domain::schedule(stale.memory, stale.last_review, Rating::Good, later).unwrap();
+        assert_ne!(
+            expected.due, from_stale.due,
+            "stale New Card schedule must differ from persisted-state schedule"
+        );
+
+        let scheduled = rate_card(&pool, &stale, Rating::Good, later).await.unwrap();
+        assert_eq!(scheduled.memory, expected.memory);
+        assert_eq!(scheduled.due, expected.due);
+        assert_eq!(scheduled.last_review, later);
     }
 }
