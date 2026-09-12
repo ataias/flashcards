@@ -4,6 +4,8 @@ Status: **completed** (grilled 2026-09-11; Again min-interval clarified 2026-09-
 
 Domain language lives in [`CONTEXT.md`](../CONTEXT.md). Hard decisions: [`docs/adr/`](adr/).
 
+**Superseded in v1.1:** recreate-`Default`-on-last-delete, and the `web→db` wiring. See [`SPEC-v1.1.md`](SPEC-v1.1.md) and issue #36. This document remains the historical v1 product contract.
+
 ## Goal
 
 A single-user, local Anki-like study app: create Decks and plain-text Cards, Study a Deck, Review with FSRS (Again / Hard / Good / Easy).

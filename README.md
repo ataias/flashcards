@@ -6,10 +6,11 @@ Repo: https://github.com/ataias/flashcards
 
 ## Status
 
-v1 is implemented: Decks, Cards, and a per-Deck Study / Review loop (Again / Hard / Good / Easy).
+v1 is **completed**. v1.1 architecture (deep modules + `Store` seam) is specified; implementation tracked in [#36](https://github.com/ataias/flashcards/issues/36).
 
 - [`CONTEXT.md`](CONTEXT.md) — domain language
-- [`docs/SPEC-v1.md`](docs/SPEC-v1.md) — accepted v1 product/spec
+- [`docs/SPEC-v1.md`](docs/SPEC-v1.md) — completed v1 product/spec
+- [`docs/SPEC-v1.1.md`](docs/SPEC-v1.1.md) — accepted v1.1 architecture
 - [`docs/SPEC-ci.md`](docs/SPEC-ci.md) — accepted CI spec
 - [`docs/adr/`](docs/adr/) — architecture decisions
 - [`.cursor/skills/do-work/SKILL.md`](.cursor/skills/do-work/SKILL.md) — how Full Stack implements issues / PRs
@@ -20,11 +21,10 @@ v1 is implemented: Decks, Cards, and a per-Deck Study / Review loop (Again / Har
 
 ## Run
 
-From the repo root (`crates/web` is the workspace default member, so both commands start the same binary):
+From the repo root (`crates/web` is the workspace default member today; v1.1 moves the binary to `crates/flashcards`):
 
 ```bash
 cargo run
-# equivalent: cargo run -p web
 # open http://127.0.0.1:3000
 ```
 
@@ -37,7 +37,7 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 
 ## Use
 
-1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. Deleting the last Deck recreates `Default`.
+1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. (v1 recreates `Default` if you delete the last Deck; v1.1 allows an empty list — see SPEC-v1.1.)
 2. Open a Deck to create, edit, or delete plain-text Cards (front / back).
 3. Study a Deck: front → Show answer → Again / Hard / Good / Easy. The queue is due Cards plus up to 20 New Cards per local calendar day.
 
@@ -47,7 +47,7 @@ The UI is offline (vendored HTMX + CSS; no CDN).
 
 Axum · Askama · HTMX (vendored) · SQLx / SQLite · [`fsrs`](https://crates.io/crates/fsrs)
 
-Workspace: `crates/web` (binary), `crates/domain`, `crates/db`.
+Workspace today: `crates/web` (binary), `crates/domain`, `crates/db`. v1.1 target: `web` library + `flashcards` binary — see SPEC-v1.1.
 
 ## Implementing
 
