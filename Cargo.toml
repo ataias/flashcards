@@ -7,5 +7,6 @@ default-members = ["crates/web"]
 edition = "2024"
 version = "0.1.0"
 # Edition 2024 needs rustc ≥ 1.85. `fsrs` 6.x also uses if-let chains (1.88+).
+# Workspace pin matches rust-toolchain.toml / Containerfile.
 # Committed Cargo.lock is the sole transitive version pin.
-rust-version = "1.88"
+rust-version = "1.98.1"
