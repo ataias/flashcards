@@ -16,9 +16,13 @@ Add Anki-like Learning and Relearning minute steps; remove the v1 ≥1 day floor
 | Again (new / learning) | FSRS then ≥1 day | Learning steps (`1m`, `10m`) |
 | Again (review) | FSRS then ≥1 day | FSRS Again on memory, then Relearning (`10m`) |
 | Review intervals | Floored to ≥1 day | Unfloored FSRS float-day duration |
-| New-card cap | Never-reviewed Cards | First transition New → Learning consumes one of 20/day |
+| New-card cap | Never-reviewed Cards | Leaving New (first Rating) consumes one of 20/day |
 | Review log | Each Rating | Unchanged — still every Rating, including steps |
 | Study queue | due + new cap | Same shape; step dues reappear when due ≤ now |
+
+## Leaving New
+
+The first Rating on a New Card is applied with **Learning rules at step index 0** (as if the Card entered Learning at step 0, then that Rating ran). That first Rating **always consumes one new-card slot** for the Deck’s local day — including **Easy**, which may graduate straight into Review without remaining in Learning.
 
 ## Button rules (Learning / Relearning)
 
@@ -45,12 +49,12 @@ Add Anki-like Learning and Relearning minute steps; remove the v1 ≥1 day floor
 ## Out of scope (v1.2)
 
 - Settings UI for custom steps
-- Separate Anki-like **learn mode** UI (future grill — tracked when filing follow-ups)
+- Separate Anki-like **learn mode** UI (future grill — [#55](https://github.com/ataias/flashcards/issues/55))
 - Markdown, FSRS optimizer UI, multi-user
 
 ## Acceptance criteria
 
-1. New Card: first Good/Hard/Easy/Again enters Learning (or graduates on Easy) per rules; consumes one new-card slot.
+1. New Card: first Rating uses Learning rules at step 0; consumes one new-card slot even if Easy graduates immediately to Review.
 2. Learning Again/Hard/Good/Easy behave as the table; last-step Good and Easy reach Review with unfloored FSRS dues (can be &lt; 1 day).
 3. Review Again updates FSRS memory immediately, enters Relearning, due in 10m (default); graduate returns to Review.
 4. Study still lists due ≤ now then New under cap; Learning Cards reappear in-session when steps elapse (tests may fake clock).
