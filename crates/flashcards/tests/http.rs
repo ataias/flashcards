@@ -41,6 +41,45 @@ async fn get(app: Router, path: &str) -> (StatusCode, String) {
     .await
 }
 
+async fn rate_http(db: &TestDb, card_id: i64, rating: db::Rating) -> (StatusCode, String) {
+    post_form(
+        app(db),
+        &format!("/cards/{card_id}/rate"),
+        &format!("rating={}", rating.as_grade()),
+        true,
+    )
+    .await
+}
+
+async fn rate_matches_domain(db: &TestDb, card_id: i64, rating: db::Rating) -> db::Card {
+    let before = db::get_card(&db.pool, card_id).await.unwrap().unwrap();
+    let (status, _) = rate_http(db, card_id, rating).await;
+    assert_eq!(status, StatusCode::OK);
+    let after = db::get_card(&db.pool, card_id).await.unwrap().unwrap();
+    let rated_at = after.last_review.expect("rating must set last_review");
+    let (expected, _) = before.apply_rating(rating, rated_at).unwrap();
+    assert_eq!(after, expected);
+    after
+}
+
+async fn review_ratings(pool: &SqlitePool, card_id: i64) -> Vec<i64> {
+    sqlx::query_scalar("SELECT rating FROM review_logs WHERE card_id = ? ORDER BY id")
+        .bind(card_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn set_due(pool: &SqlitePool, card_id: i64, due: chrono::DateTime<chrono::Utc>) {
+    let due = due.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query("UPDATE cards SET due = ? WHERE id = ?")
+        .bind(due)
+        .bind(card_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCode, String) {
     let mut builder = Request::builder()
         .method("POST")
@@ -621,4 +660,211 @@ async fn study_card_text_is_html_escaped() {
     assert_eq!(status, StatusCode::OK);
     assert!(!html.contains("<script>alert(1)</script>"));
     assert!(html.contains("a&#38;b"));
+}
+
+#[tokio::test]
+async fn new_card_ratings_follow_learning_steps() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Q", "A").await.unwrap();
+
+    let after_again = rate_matches_domain(&db, card.id, db::Rating::Again).await;
+    assert_eq!(after_again.phase, db::Phase::Learning);
+    assert_eq!(after_again.learning_step, Some(0));
+    assert_eq!(after_again.memory, None);
+    assert_eq!(review_ratings(pool, card.id).await, vec![1]);
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+    assert!(!html.contains(">Q</p>"));
+
+    let (status, html) = get(app(&db), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("due 0"));
+    assert!(html.contains("new 0"));
+
+    let after_hard = rate_matches_domain(&db, card.id, db::Rating::Hard).await;
+    assert_eq!(after_hard.phase, db::Phase::Learning);
+    assert_eq!(after_hard.learning_step, Some(0));
+    assert_eq!(after_hard.memory, None);
+
+    let after_good = rate_matches_domain(&db, card.id, db::Rating::Good).await;
+    assert_eq!(after_good.phase, db::Phase::Learning);
+    assert_eq!(after_good.learning_step, Some(1));
+    assert_eq!(after_good.memory, None);
+    assert_eq!(review_ratings(pool, card.id).await, vec![1, 2, 3]);
+}
+
+#[tokio::test]
+async fn learning_good_on_last_step_graduates() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Q", "A").await.unwrap();
+
+    let learning = rate_matches_domain(&db, card.id, db::Rating::Good).await;
+    assert_eq!(learning.phase, db::Phase::Learning);
+    assert_eq!(learning.learning_step, Some(1));
+
+    let graduated = rate_matches_domain(&db, card.id, db::Rating::Good).await;
+    assert_eq!(graduated.phase, db::Phase::Review);
+    assert_eq!(graduated.learning_step, None);
+    assert!(graduated.memory.is_some());
+    assert_eq!(review_ratings(pool, card.id).await, vec![3, 3]);
+
+    let early = db::create_card(pool, deck_id, "Early", "A").await.unwrap();
+    let learning = rate_matches_domain(&db, early.id, db::Rating::Again).await;
+    assert_eq!(learning.phase, db::Phase::Learning);
+    let easy = rate_matches_domain(&db, early.id, db::Rating::Easy).await;
+    assert_eq!(easy.phase, db::Phase::Review);
+    assert_eq!(easy.learning_step, None);
+    assert!(easy.memory.is_some());
+}
+
+#[tokio::test]
+async fn new_easy_graduates_to_review() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Q", "A").await.unwrap();
+
+    let graduated = rate_matches_domain(&db, card.id, db::Rating::Easy).await;
+    assert_eq!(graduated.phase, db::Phase::Review);
+    assert_eq!(graduated.learning_step, None);
+    assert!(graduated.memory.is_some());
+    assert_eq!(review_ratings(pool, card.id).await, vec![4]);
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+
+    let (status, html) = get(app(&db), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("due 0"));
+    assert!(html.contains("new 0"));
+}
+
+#[tokio::test]
+async fn review_again_enters_ten_minute_relearning() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Q", "A").await.unwrap();
+
+    let review = rate_matches_domain(&db, card.id, db::Rating::Easy).await;
+    assert_eq!(review.phase, db::Phase::Review);
+    let review_memory = review.memory.expect("Easy from New must set FSRS memory");
+
+    let relearning = rate_matches_domain(&db, card.id, db::Rating::Again).await;
+    assert_eq!(relearning.phase, db::Phase::Relearning);
+    assert_eq!(relearning.learning_step, Some(0));
+    let relearning_memory = relearning
+        .memory
+        .expect("Review Again updates FSRS immediately");
+    assert_ne!(relearning_memory, review_memory);
+    assert_eq!(
+        relearning.due,
+        Some(relearning.last_review.unwrap() + chrono::Duration::minutes(10))
+    );
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+
+    let graduated = rate_matches_domain(&db, card.id, db::Rating::Good).await;
+    assert_eq!(graduated.phase, db::Phase::Review);
+    assert_eq!(graduated.learning_step, None);
+    assert!(graduated.memory.is_some());
+    assert_eq!(review_ratings(pool, card.id).await, vec![4, 1, 3]);
+}
+
+#[tokio::test]
+async fn learning_card_reappears_when_step_elapses() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Step due", "A")
+        .await
+        .unwrap();
+
+    let learning = rate_matches_domain(&db, card.id, db::Rating::Again).await;
+    assert_eq!(learning.phase, db::Phase::Learning);
+    assert!(learning.due.unwrap() > chrono::Utc::now());
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+    assert!(!html.contains("Step due"));
+
+    set_due(pool, card.id, chrono::Utc::now()).await;
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Step due"));
+    assert!(html.contains("Show answer"));
+    assert!(!html.contains("No Cards to Review"));
+
+    let (status, html) = get(app(&db), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("due 1"));
+    assert!(html.contains("new 0"));
+}
+
+#[tokio::test]
+async fn new_cap_consumed_on_enter_learning_including_easy_from_new() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let learning_id = db::list_decks(pool).await.unwrap()[0].id;
+    for i in 0..21 {
+        db::create_card(pool, learning_id, &format!("L{i}"), &format!("A{i}"))
+            .await
+            .unwrap();
+    }
+    let learning_cards = db::list_cards_in_deck(pool, learning_id).await.unwrap();
+    for card in learning_cards.iter().take(20) {
+        rate_matches_domain(&db, card.id, db::Rating::Again).await;
+    }
+
+    let (status, html) = get(app(&db), &format!("/decks/{learning_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+    assert!(!html.contains("L20"));
+
+    let (status, html) = get(app(&db), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("due 0"));
+    assert!(html.contains("new 0"));
+
+    let easy_deck = db::create_deck(pool, "EasyCap").await.unwrap();
+    for i in 0..21 {
+        db::create_card(pool, easy_deck.id, &format!("E{i}"), &format!("A{i}"))
+            .await
+            .unwrap();
+    }
+    let easy_cards = db::list_cards_in_deck(pool, easy_deck.id).await.unwrap();
+    for card in easy_cards.iter().take(20) {
+        rate_matches_domain(&db, card.id, db::Rating::Easy).await;
+    }
+
+    let (status, html) = get(app(&db), &format!("/decks/{}/study", easy_deck.id)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+    assert!(!html.contains("E20"));
+
+    let leftover = db::create_card(pool, learning_id, "Further", "A")
+        .await
+        .unwrap();
+    let first = &learning_cards[0];
+    rate_matches_domain(&db, first.id, db::Rating::Hard).await;
+    assert_eq!(review_ratings(pool, first.id).await.len(), 2);
+
+    let (status, html) = get(app(&db), &format!("/decks/{learning_id}/study")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("No Cards to Review"));
+    assert!(!html.contains("L20"));
+    assert!(!html.contains("Further"));
+    let leftover = db::get_card(pool, leftover.id).await.unwrap().unwrap();
+    assert!(leftover.is_new());
 }

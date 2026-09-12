@@ -6,7 +6,7 @@ use std::path::Path;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use domain::{ReviewLogEntry, ScheduleError};
 
-pub use domain::{Card, CardText, Deck, DeckSummary, Rating, ScheduledReview};
+pub use domain::{Card, CardText, Deck, DeckSummary, Phase, Rating, ScheduledReview};
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
