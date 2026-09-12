@@ -58,6 +58,8 @@ mod tests {
             deck_id,
             front: "front".into(),
             back: "back".into(),
+            phase: crate::Phase::New,
+            learning_step: None,
             memory: None,
             due: None,
             last_review: None,
@@ -70,12 +72,28 @@ mod tests {
             deck_id,
             front: "front".into(),
             back: "back".into(),
+            phase: crate::Phase::Review,
+            learning_step: None,
             memory: Some(MemoryState {
                 stability: 2.0,
                 difficulty: 5.0,
             }),
             due: Some(due),
             last_review: Some(due - Duration::days(3)),
+        }
+    }
+
+    fn learning_card(id: i64, deck_id: i64, due: chrono::DateTime<Utc>) -> Card {
+        Card {
+            id,
+            deck_id,
+            front: "front".into(),
+            back: "back".into(),
+            phase: crate::Phase::Learning,
+            learning_step: Some(0),
+            memory: None,
+            due: Some(due),
+            last_review: Some(due - crate::LEARNING_STEPS[0]),
         }
     }
 
@@ -185,6 +203,26 @@ mod tests {
         let summaries = summarize_home(&inputs, now);
         assert_eq!(summaries[0].due_count, 0);
         assert_eq!(summaries[0].new_count, 0);
+    }
+
+    #[test]
+    fn learning_card_due_now_counts_as_due_not_new() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let due = learning_card(2, 1, now_utc);
+        let later = learning_card(3, 1, now_utc + Duration::minutes(10));
+        let new = new_card(1, 1);
+        let inputs = HomeInputs {
+            decks: vec![home_deck(
+                deck(1, "Default"),
+                vec![due, later, new],
+                vec![now_utc],
+            )],
+        };
+        let summaries = summarize_home(&inputs, now);
+        assert_eq!(summaries[0].due_count, 1);
+        assert_eq!(summaries[0].new_count, 1);
     }
 
     #[test]

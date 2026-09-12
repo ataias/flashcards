@@ -138,8 +138,8 @@ fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NEW_CARDS_PER_LOCAL_DAY;
     use crate::store::{HomeDeckInput, HomeInputs, StudyInputs};
+    use crate::{LEARNING_STEPS, NEW_CARDS_PER_LOCAL_DAY, Phase};
     use chrono::{Duration, FixedOffset, TimeZone};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Mutex;
@@ -261,6 +261,8 @@ mod tests {
                 deck_id,
                 front: front.to_string(),
                 back: back.to_string(),
+                phase: crate::Phase::New,
+                learning_step: None,
                 memory: None,
                 due: None,
                 last_review: None,
@@ -503,6 +505,78 @@ mod tests {
         assert_eq!(default_summary.due_count, 0);
         assert_eq!(later_summary.new_count, 0);
         assert_eq!(later_summary.due_count, 0);
+    }
+
+    #[tokio::test]
+    async fn easy_on_new_consumes_one_new_cap_slot() {
+        let store = MemStore::empty();
+        let deck = create_deck(&store, "Default").await.unwrap();
+        for i in 0..3 {
+            create_card(&store, deck.id, &format!("Q{i}"), &format!("A{i}"))
+                .await
+                .unwrap();
+        }
+        let now = noon_utc();
+        let (updated, _) = rate(&store, 1, Rating::Easy, now).await.unwrap();
+        assert_eq!(updated.phase, Phase::Review);
+        assert!(!updated.is_new());
+
+        let summaries = list_home(&store, now).await.unwrap();
+        assert_eq!(summaries[0].new_count, 2);
+        assert_eq!(summaries[0].due_count, 0);
+
+        let next = next_study_card(&store, deck.id, now)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.id, 2);
+        assert!(next.is_new());
+    }
+
+    #[tokio::test]
+    async fn further_learning_steps_do_not_consume_another_new_slot() {
+        let store = MemStore::empty();
+        let deck = create_deck(&store, "Default").await.unwrap();
+        for i in 0..3 {
+            create_card(&store, deck.id, &format!("Q{i}"), &format!("A{i}"))
+                .await
+                .unwrap();
+        }
+        let now = noon_utc();
+        rate(&store, 1, Rating::Good, now).await.unwrap();
+        rate(&store, 1, Rating::Again, now + Duration::minutes(10))
+            .await
+            .unwrap();
+
+        let summaries = list_home(&store, now).await.unwrap();
+        assert_eq!(summaries[0].new_count, 2);
+        assert_eq!(store.lock().reviews.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn learning_card_returns_to_queue_when_step_elapses() {
+        let store = MemStore::empty();
+        let deck = create_deck(&store, "Default").await.unwrap();
+        create_card(&store, deck.id, "Q", "A").await.unwrap();
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        rate(&store, 1, Rating::Again, now.with_timezone(&Utc))
+            .await
+            .unwrap();
+
+        assert!(
+            next_study_card(&store, deck.id, now)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let later = now + LEARNING_STEPS[0];
+        let again = next_study_card(&store, deck.id, later)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(again.phase, Phase::Learning);
+        assert_eq!(again.learning_step, Some(0));
     }
 
     #[tokio::test]

@@ -34,10 +34,10 @@ impl std::error::Error for ScheduleError {
     }
 }
 
-/// Next memory state and due instant for a Rating, using FSRS v6 defaults.
+/// Next memory state and due instant for a Review-phase Rating (or graduation).
 ///
-/// `memory` / `last_review` are `None` for a New Card. Interval is the official
-/// `fsrs` schedule example: `interval.round().max(1.0)` whole days.
+/// `memory` / `last_review` are `None` when graduating from Learning with no
+/// prior FSRS state. The crate's float-day interval is used as a duration.
 pub fn schedule(
     memory: Option<MemoryState>,
     last_review: Option<DateTime<Utc>>,
@@ -57,12 +57,16 @@ pub fn schedule(
         Rating::Good => next_states.good,
         Rating::Easy => next_states.easy,
     };
-    let interval_days = item.interval.round().max(1.0) as i64;
     Ok(ScheduledReview {
         memory: item.memory,
-        due: now + Duration::days(interval_days),
+        due: now + duration_from_fsrs_days(item.interval),
         last_review: now,
     })
+}
+
+fn duration_from_fsrs_days(interval_days: f32) -> Duration {
+    let millis = (f64::from(interval_days) * 86_400_000.0).round() as i64;
+    Duration::milliseconds(millis.max(0))
 }
 
 #[cfg(test)]
@@ -95,10 +99,9 @@ mod tests {
         let now = noon();
         let scheduled = schedule(None, None, Rating::Good, now).unwrap();
         let item = expected_item(None, 0, Rating::Good);
-        let interval_days = item.interval.round().max(1.0) as i64;
         assert_eq!(scheduled.memory, item.memory);
         assert_eq!(scheduled.last_review, now);
-        assert_eq!(scheduled.due, now + Duration::days(interval_days));
+        assert_eq!(scheduled.due, now + duration_from_fsrs_days(item.interval));
         assert!(scheduled.due > now);
     }
 
@@ -112,24 +115,24 @@ mod tests {
     }
 
     #[test]
-    fn again_interval_is_at_least_one_day() {
+    fn review_interval_can_be_shorter_than_one_day() {
         let now = noon();
-        let new_card = schedule(None, None, Rating::Again, now).unwrap();
-        assert!(new_card.due >= now + Duration::days(1));
-
-        // Short stability / high difficulty can produce a sub-day FSRS interval;
-        // v1 still floors Again to a whole day.
-        let reviewed = schedule(
-            Some(MemoryState {
-                stability: 0.1,
-                difficulty: 10.0,
-            }),
+        let memory = MemoryState {
+            stability: 0.1,
+            difficulty: 10.0,
+        };
+        let scheduled = schedule(
+            Some(memory),
             Some(now - Duration::days(1)),
             Rating::Again,
             now,
         )
         .unwrap();
-        assert!(reviewed.due >= now + Duration::days(1));
+        let item = expected_item(Some(memory), 1, Rating::Again);
+        assert!(item.interval < 1.0);
+        assert_eq!(scheduled.due, now + duration_from_fsrs_days(item.interval));
+        assert!(scheduled.due < now + Duration::days(1));
+        assert!(scheduled.due > now);
     }
 
     #[test]
@@ -142,9 +145,8 @@ mod tests {
         };
         let scheduled = schedule(Some(memory), Some(last), Rating::Good, now).unwrap();
         let item = expected_item(Some(memory), 10, Rating::Good);
-        let interval_days = item.interval.round().max(1.0) as i64;
         assert_eq!(scheduled.memory, item.memory);
-        assert_eq!(scheduled.due, now + Duration::days(interval_days));
+        assert_eq!(scheduled.due, now + duration_from_fsrs_days(item.interval));
     }
 
     #[test]

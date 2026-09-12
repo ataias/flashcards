@@ -317,8 +317,8 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
         });
         match (card_id, stability, due) {
             (None, _, _) => {}
-            (Some(_), None, _) => summary.new_count += 1,
-            (Some(_), Some(_), Some(due)) => {
+            (Some(_), None, None) => summary.new_count += 1,
+            (Some(_), _, Some(due)) => {
                 if domain::is_due_at(parse_utc(&due)?, now_utc) {
                     summary.due_count += 1;
                 }
@@ -426,6 +426,8 @@ pub async fn create_card(
         deck_id,
         front,
         back,
+        phase: domain::Phase::New,
+        learning_step: None,
         memory: None,
         due: None,
         last_review: None,
@@ -542,9 +544,9 @@ pub async fn rate_card(
     card: &Card,
     rating: Rating,
     now: DateTime<Utc>,
-) -> Result<ScheduledReview, Error> {
+) -> Result<Card, Error> {
     let (updated, _) = persist_review(pool, card.id, rating, now).await?;
-    scheduled_review(&updated)
+    Ok(updated)
 }
 
 async fn persist_review(
@@ -568,39 +570,34 @@ async fn write_review_on(
     card: &Card,
     entry: &ReviewLogEntry,
 ) -> Result<(), Error> {
-    let scheduled = scheduled_review(card)?;
-    let due = rfc3339(scheduled.due);
-    let last_review = rfc3339(scheduled.last_review);
+    let due = card.due.map(rfc3339);
+    let last_review = card.last_review.map(rfc3339);
+    // Existing CHECK ties memory to due. Phase/step columns land in the db
+    // follow-up; Learning rows need a stand-in until then.
+    let (stability, difficulty) = match card.memory {
+        Some(memory) => (Some(memory.stability), Some(memory.difficulty)),
+        None if card.due.is_some() => (Some(0.0), Some(0.0)),
+        None => (None, None),
+    };
     sqlx::query(
         "UPDATE cards
          SET stability = ?, difficulty = ?, due = ?, last_review = ?
          WHERE id = ?",
     )
-    .bind(scheduled.memory.stability)
-    .bind(scheduled.memory.difficulty)
-    .bind(&due)
-    .bind(&last_review)
+    .bind(stability)
+    .bind(difficulty)
+    .bind(due.as_deref())
+    .bind(last_review.as_deref())
     .bind(card.id)
     .execute(&mut **tx)
     .await?;
     sqlx::query("INSERT INTO review_logs (card_id, rated_at, rating) VALUES (?, ?, ?)")
         .bind(entry.card_id)
-        .bind(&last_review)
+        .bind(rfc3339(entry.rated_at))
         .bind(entry.rating.as_grade())
         .execute(&mut **tx)
         .await?;
     Ok(())
-}
-
-fn scheduled_review(card: &Card) -> Result<ScheduledReview, Error> {
-    match (card.memory, card.due, card.last_review) {
-        (Some(memory), Some(due), Some(last_review)) => Ok(ScheduledReview {
-            memory,
-            due,
-            last_review,
-        }),
-        _ => Err(Error::IncompleteFsrs { card_id: card.id }),
-    }
 }
 
 fn rfc3339(instant: DateTime<Utc>) -> String {
@@ -628,15 +625,19 @@ fn card_from_row(row: CardRow) -> Result<Card, Error> {
     };
     let due = due.as_deref().map(parse_utc).transpose()?;
     let last_review = last_review.as_deref().map(parse_utc).transpose()?;
-    match (&memory, &due, &last_review) {
-        (None, None, None) | (Some(_), Some(_), Some(_)) => {}
+    let (phase, learning_step) = match (&memory, &due, &last_review) {
+        (None, None, None) => (domain::Phase::New, None),
+        (None, Some(_), Some(_)) => (domain::Phase::Learning, Some(0)),
+        (Some(_), Some(_), Some(_)) => (domain::Phase::Review, None),
         _ => return Err(Error::IncompleteFsrs { card_id: id }),
-    }
+    };
     Ok(Card {
         id,
         deck_id,
         front,
         back,
+        phase,
+        learning_step,
         memory,
         due,
         last_review,
@@ -872,13 +873,14 @@ mod tests {
         assert!(card.is_new());
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        let scheduled = rate_card(&pool, &card, Rating::Good, now).await.unwrap();
+        let rated = rate_card(&pool, &card, Rating::Good, now).await.unwrap();
 
         let updated = get_card(&pool, card_id).await.unwrap().unwrap();
         assert!(!updated.is_new());
-        assert_eq!(updated.memory, Some(scheduled.memory));
-        assert_eq!(updated.due, Some(scheduled.due));
+        assert_eq!(rated.phase, domain::Phase::Learning);
+        assert_eq!(updated.due, Some(now + domain::LEARNING_STEPS[1]));
         assert_eq!(updated.last_review, Some(now));
+        assert_eq!(updated.due, rated.due);
         assert_eq!(count(&pool, "review_logs").await, 1);
     }
 
@@ -1049,12 +1051,13 @@ mod tests {
         assert!(updated.is_new());
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        let scheduled = rate_card(&pool, &updated, Rating::Good, now).await.unwrap();
+        let rated = rate_card(&pool, &updated, Rating::Easy, now).await.unwrap();
         let edited = update_card(&pool, created.id, "Q3", "A3").await.unwrap();
         assert_eq!(edited.front, "Q3");
         assert_eq!(edited.back, "A3");
-        assert_eq!(edited.memory, Some(scheduled.memory));
-        assert_eq!(edited.due, Some(scheduled.due));
+        assert_eq!(edited.phase, domain::Phase::Review);
+        assert_eq!(edited.memory, rated.memory);
+        assert_eq!(edited.due, rated.due);
         assert_eq!(edited.last_review, Some(now));
 
         let deleted_deck_id = delete_card(&pool, created.id).await.unwrap();
@@ -1114,20 +1117,14 @@ mod tests {
         assert!(stale.is_new());
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        rate_card(&pool, &stale, Rating::Good, now).await.unwrap();
+        rate_card(&pool, &stale, Rating::Easy, now).await.unwrap();
         let after_first = get_card(&pool, card_id).await.unwrap().unwrap();
         assert!(!after_first.is_new());
+        assert_eq!(after_first.phase, domain::Phase::Review);
 
         let later = now + chrono::Duration::days(1);
-        let expected = domain::schedule(
-            after_first.memory,
-            after_first.last_review,
-            Rating::Good,
-            later,
-        )
-        .unwrap();
-        let from_stale =
-            domain::schedule(stale.memory, stale.last_review, Rating::Good, later).unwrap();
+        let expected = after_first.apply_rating(Rating::Good, later).unwrap().0;
+        let from_stale = stale.apply_rating(Rating::Good, later).unwrap().0;
         assert_ne!(
             expected.due, from_stale.due,
             "stale New Card schedule must differ from persisted-state schedule"
@@ -1136,7 +1133,7 @@ mod tests {
         let scheduled = rate_card(&pool, &stale, Rating::Good, later).await.unwrap();
         assert_eq!(scheduled.memory, expected.memory);
         assert_eq!(scheduled.due, expected.due);
-        assert_eq!(scheduled.last_review, later);
+        assert_eq!(scheduled.last_review, Some(later));
     }
 
     #[tokio::test]
@@ -1149,7 +1146,7 @@ mod tests {
         assert!(stale.is_new());
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        let (first, first_entry) = stale.apply_rating(Rating::Good, now).unwrap();
+        let (first, first_entry) = stale.apply_rating(Rating::Easy, now).unwrap();
         store.commit_review(&first, &first_entry).await.unwrap();
         let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
 
@@ -1182,7 +1179,7 @@ mod tests {
             .unwrap();
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        domain::rate(&store, stale.id, Rating::Good, now)
+        domain::rate(&store, stale.id, Rating::Easy, now)
             .await
             .unwrap();
         let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
