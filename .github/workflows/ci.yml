@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# actions: write is required so docker/build-push-action (type=gha)
+# and Swatinem/rust-cache can persist.
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Build CI image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          push: false
+          load: true
+          tags: flashcards-ci:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # load + gha cache together need provenance disabled
+          provenance: false
+
+      - name: Run checks in CI image
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.cargo/registry" "${HOME}/.cargo/git"
+          docker run --rm \
+            -e CARGO_TERM_COLOR \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${HOME}/.cargo/registry:/usr/local/cargo/registry" \
+            -v "${HOME}/.cargo/git:/usr/local/cargo/git" \
+            -w /workspace \
+            flashcards-ci:local \
+            ./scripts/checks.sh

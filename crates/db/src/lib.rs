@@ -7,7 +7,7 @@ use domain::{Card, Rating, ScheduleError, ScheduledReview};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{SqlitePool, migrate::Migrator};
 
-/// Deck name created when the database has zero Decks (SPEC / CONTEXT).
+/// Deck name created when the database has zero Decks.
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -93,7 +93,6 @@ impl From<ScheduleError> for Error {
     }
 }
 
-/// Open (or create) the SQLite file, run migrations, and seed `Default` if needed.
 pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
     let path = path.as_ref();
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -120,8 +119,6 @@ async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, Error> {
     Ok(pool)
 }
 
-/// Insert Deck named `Default` when zero Decks remain.
-///
 /// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent `open`
 /// cannot both observe an empty table and insert a second Default.
 pub async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
@@ -242,7 +239,6 @@ pub async fn first_review_times(
     rows.into_iter().map(|(value,)| parse_utc(&value)).collect()
 }
 
-/// Study queue: due Cards plus New Cards up to the local-day cap.
 pub async fn study_queue<Tz: TimeZone>(
     pool: &SqlitePool,
     deck_id: i64,
@@ -258,7 +254,6 @@ pub async fn study_queue<Tz: TimeZone>(
     Ok(domain::select_study_queue(&cards, &first_local, now_local))
 }
 
-/// Persist FSRS memory state + due and append a Review log in one transaction.
 pub async fn apply_review(
     pool: &SqlitePool,
     card_id: i64,
@@ -290,7 +285,6 @@ pub async fn apply_review(
     Ok(())
 }
 
-/// Schedule a Rating with FSRS, then persist the Card and Review log.
 pub async fn rate_card(
     pool: &SqlitePool,
     card: &Card,

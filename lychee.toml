@@ -1,4 +1,4 @@
-# Shared lychee config for SPEC-ci markdown docs (lychee 0.24).
+# Shared lychee config for markdown docs (lychee 0.24).
 # Include set: README.md, CONTEXT.md, docs/** — pass the `docs` directory
 # (lychee 0.24 does not expand a literal `docs/**` glob; `extensions` keeps
 # the walk to markdown).

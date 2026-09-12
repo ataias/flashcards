@@ -2,10 +2,8 @@ use chrono::{DateTime, TimeZone, Utc};
 
 use crate::Card;
 
-/// New Cards that may enter Study per Deck per local calendar day (SPEC / CONTEXT).
 pub const NEW_CARDS_PER_LOCAL_DAY: usize = 20;
 
-/// Count first Reviews whose local calendar date matches `now`.
 pub fn new_cards_introduced_on_local_day<Tz: TimeZone>(
     first_reviewed_at: &[DateTime<Tz>],
     now: &DateTime<Tz>,
@@ -17,8 +15,6 @@ pub fn new_cards_introduced_on_local_day<Tz: TimeZone>(
         .count()
 }
 
-/// Study queue for one Deck: due Cards, then New Cards up to the daily cap.
-///
 /// `now` must be in the machine-local timezone (local midnight boundary).
 /// `first_reviewed_at` is each Card's first Review instant in that same zone.
 pub fn select_study_queue<Tz: TimeZone>(
