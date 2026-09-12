@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::extract::{Form, Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::{Local, Utc};
 use domain::{Deck, Rating, Store};
@@ -42,9 +42,9 @@ pub async fn study_page<S: Store>(
     State(store): State<S>,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some(deck) = domain::get_deck(&store, deck_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let deck = domain::get_deck(&store, deck_id)
+        .await?
+        .ok_or(domain::Error::DeckNotFound { deck_id })?;
     let card = next_card(&store, deck_id).await?;
     render_full(&deck, card, false, None)
 }
@@ -54,9 +54,9 @@ pub async fn reveal<S: Store>(
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let Some(card) = domain::get_card(&store, card_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let card = domain::get_card(&store, card_id)
+        .await?
+        .ok_or(domain::Error::CardNotFound { card_id })?;
     render_review(
         &store,
         card.deck_id,
@@ -75,9 +75,9 @@ pub async fn rate<S: Store>(
     Form(form): Form<RateForm>,
 ) -> Result<Response, AppError> {
     let Some(rating) = Rating::from_grade(form.rating) else {
-        let Some(card) = domain::get_card(&store, card_id).await? else {
-            return Ok(StatusCode::NOT_FOUND.into_response());
-        };
+        let card = domain::get_card(&store, card_id)
+            .await?
+            .ok_or(domain::Error::CardNotFound { card_id })?;
         return render_review(
             &store,
             card.deck_id,
@@ -88,11 +88,8 @@ pub async fn rate<S: Store>(
         )
         .await;
     };
-    match domain::rate(&store, card_id, rating, Utc::now()).await {
-        Ok((card, _)) => after_rate(&store, card.deck_id, &headers).await,
-        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(err) => Err(err.into()),
-    }
+    let (card, _) = domain::rate(&store, card_id, rating, Utc::now()).await?;
+    after_rate(&store, card.deck_id, &headers).await
 }
 
 async fn after_rate<S: Store>(
@@ -116,9 +113,9 @@ async fn render_review<S: Store>(
     error: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<Response, AppError> {
-    let Some(deck) = domain::get_deck(store, deck_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let deck = domain::get_deck(store, deck_id)
+        .await?
+        .ok_or(domain::Error::DeckNotFound { deck_id })?;
     if wants_fragment(headers) {
         Ok(Html(
             ReviewTemplate {

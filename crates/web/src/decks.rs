@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::extract::{Form, Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::Local;
 use domain::Store;
@@ -64,7 +64,6 @@ pub async fn rename_deck<S: Store>(
         Err(domain::Error::EmptyDeckName) => {
             after_change(&store, &headers, Some("Deck name cannot be empty.")).await
         }
-        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
@@ -74,11 +73,8 @@ pub async fn delete_deck<S: Store>(
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    match domain::delete_deck(&store, deck_id).await {
-        Ok(()) => after_change(&store, &headers, None).await,
-        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(err) => Err(err.into()),
-    }
+    domain::delete_deck(&store, deck_id).await?;
+    after_change(&store, &headers, None).await
 }
 
 async fn after_change<S: Store>(

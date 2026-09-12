@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::extract::{Form, Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use domain::Store;
 use serde::Deserialize;
@@ -123,7 +123,6 @@ pub async fn create_card<S: Store>(
             )
             .await
         }
-        Err(domain::Error::DeckNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
@@ -156,7 +155,6 @@ pub async fn update_card<S: Store>(
             )
             .await
         }
-        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
@@ -166,11 +164,8 @@ pub async fn delete_card<S: Store>(
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    match domain::delete_card(&store, card_id).await {
-        Ok(deck_id) => after_change(&store, deck_id, &headers, None, CardDraft::default()).await,
-        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(err) => Err(err.into()),
-    }
+    let deck_id = domain::delete_card(&store, card_id).await?;
+    after_change(&store, deck_id, &headers, None, CardDraft::default()).await
 }
 
 async fn card_error<S: Store>(
@@ -180,9 +175,9 @@ async fn card_error<S: Store>(
     error: &str,
     form: &CardForm,
 ) -> Result<Response, AppError> {
-    let Some(card) = domain::get_card(store, card_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let card = domain::get_card(store, card_id)
+        .await?
+        .ok_or(domain::Error::CardNotFound { card_id })?;
     after_change(
         store,
         card.deck_id,
@@ -215,13 +210,7 @@ async fn render_deck_page<S: Store>(
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (deck, cards) = match domain::list_deck_cards(store, deck_id).await {
-        Ok(loaded) => loaded,
-        Err(domain::Error::DeckNotFound { .. }) => {
-            return Ok(StatusCode::NOT_FOUND.into_response());
-        }
-        Err(err) => return Err(err.into()),
-    };
+    let (deck, cards) = domain::list_deck_cards(store, deck_id).await?;
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
@@ -241,13 +230,7 @@ async fn render_cards<S: Store>(
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let cards = match domain::list_deck_cards(store, deck_id).await {
-        Ok((_, cards)) => cards,
-        Err(domain::Error::DeckNotFound { .. }) => {
-            return Ok(StatusCode::NOT_FOUND.into_response());
-        }
-        Err(err) => return Err(err.into()),
-    };
+    let (_, cards) = domain::list_deck_cards(store, deck_id).await?;
     Ok(Html(
         CardsTemplate {
             deck_id,
