@@ -40,7 +40,13 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 
 The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile).
 
-[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`).
+[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) builds and pushes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images.
+
+Confirm architectures after publish:
+
+```bash
+docker buildx imagetools inspect ghcr.io/ataias/flashcards:latest
+```
 
 ```bash
 docker pull ghcr.io/ataias/flashcards:latest

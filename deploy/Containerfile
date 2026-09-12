@@ -3,6 +3,8 @@
 #   docker build -f deploy/Containerfile -t flashcards:local .
 #
 # Rust pin matches rust-toolchain.toml / the CI image (channel 1.98.1).
+# Official rust/debian tags are multi-arch; apt deps and cargo build are
+# arch-neutral (no amd64-only packages or host-binary COPY).
 
 FROM rust:1.98.1-bookworm AS builder
 
@@ -31,8 +33,8 @@ RUN apt-get update \
     && chown flashcards:flashcards /data
 
 # ServeDir uses CARGO_MANIFEST_DIR baked in at compile time (/src/crates/web).
-COPY --from=builder /src/crates/web/static /src/crates/web/static
-COPY --from=builder /src/target/release/flashcards /usr/local/bin/flashcards
+COPY --from=builder --chown=flashcards:flashcards /src/crates/web/static /src/crates/web/static
+COPY --from=builder --chown=flashcards:flashcards /src/target/release/flashcards /usr/local/bin/flashcards
 
 # Image defaults: listen on all interfaces; SQLite on a writable volume.
 ENV FLASHCARDS_BIND=0.0.0.0:3000
