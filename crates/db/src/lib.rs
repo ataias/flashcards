@@ -136,30 +136,40 @@ pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
         })?;
     }
 
-    let existed = path.exists();
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
         .foreign_keys(true);
-    let pool = connect(options).await?;
-    if !existed {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(options)
+        .await?;
+    let first_init = !has_applied_migrations(&pool).await?;
+    MIGRATOR.run(&pool).await?;
+    if first_init {
         ensure_default_deck(&pool).await?;
     }
     Ok(pool)
 }
 
-async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, Error> {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options)
+async fn has_applied_migrations(pool: &SqlitePool) -> Result<bool, Error> {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        return Ok(false);
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(pool)
         .await?;
-    MIGRATOR.run(&pool).await?;
-    Ok(pool)
+    Ok(n > 0)
 }
 
 /// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent `open`
 /// cannot both observe an empty table and insert a second Default.
-pub async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
+async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
     let mut conn = pool.acquire().await?;
     sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
     let result = seed_default_if_empty(&mut conn).await;
@@ -523,10 +533,8 @@ pub async fn commit_review(
     pool: &SqlitePool,
     card: &Card,
     entry: &ReviewLogEntry,
-) -> Result<(), Error> {
-    persist_review(pool, card.id, entry.rating, entry.rated_at)
-        .await
-        .map(|_| ())
+) -> Result<(Card, ReviewLogEntry), Error> {
+    persist_review(pool, card.id, entry.rating, entry.rated_at).await
 }
 
 pub async fn rate_card(
@@ -535,7 +543,7 @@ pub async fn rate_card(
     rating: Rating,
     now: DateTime<Utc>,
 ) -> Result<ScheduledReview, Error> {
-    let updated = persist_review(pool, card.id, rating, now).await?;
+    let (updated, _) = persist_review(pool, card.id, rating, now).await?;
     scheduled_review(&updated)
 }
 
@@ -544,7 +552,7 @@ async fn persist_review(
     card_id: i64,
     rating: Rating,
     now: DateTime<Utc>,
-) -> Result<Card, Error> {
+) -> Result<(Card, ReviewLogEntry), Error> {
     let mut tx = pool.begin().await?;
     let fresh = get_card_on(&mut *tx, card_id)
         .await?
@@ -552,7 +560,7 @@ async fn persist_review(
     let (updated, entry) = fresh.apply_rating(rating, now)?;
     write_review_on(&mut tx, &updated, &entry).await?;
     tx.commit().await?;
-    Ok(updated)
+    Ok((updated, entry))
 }
 
 async fn write_review_on(
@@ -735,6 +743,22 @@ mod tests {
 
         let pool = open(&path).await.unwrap();
         pool.close().await;
+
+        let pool = open(&path).await.unwrap();
+        let decks = list_decks(&pool).await.unwrap();
+        assert_eq!(decks.len(), 1);
+        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
+
+        pool.close().await;
+        remove_db(&path);
+    }
+
+    #[tokio::test]
+    async fn existing_empty_file_still_seeds_default() {
+        let path = temp_db_path();
+        remove_db(&path);
+        std::fs::write(&path, []).unwrap();
+        assert!(path.exists());
 
         let pool = open(&path).await.unwrap();
         let decks = list_decks(&pool).await.unwrap();
@@ -1137,14 +1161,43 @@ mod tests {
             "stale New Card schedule must differ from persisted-state schedule"
         );
 
-        store
+        let (persisted, persisted_entry) = store
             .commit_review(&from_stale, &stale_entry)
             .await
             .unwrap();
+        assert_eq!(persisted, expected);
+        assert_ne!(persisted.due, from_stale.due);
+        assert_eq!(persisted_entry.rating, Rating::Good);
+        assert_eq!(persisted_entry.rated_at, later);
         let stored = domain::get_card(&store, stale.id).await.unwrap().unwrap();
-        assert_eq!(stored.memory, expected.memory);
-        assert_eq!(stored.due, expected.due);
-        assert_eq!(stored.last_review, expected.last_review);
+        assert_eq!(stored, persisted);
+    }
+
+    #[tokio::test]
+    async fn domain_rate_returns_card_that_was_persisted() {
+        let store = SqliteStore::new(open_memory().await);
+        let deck = domain::create_deck(&store, "Default").await.unwrap();
+        let stale = domain::create_card(&store, deck.id, "Q", "A")
+            .await
+            .unwrap();
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        domain::rate(&store, stale.id, Rating::Good, now)
+            .await
+            .unwrap();
+        let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        let later = now + chrono::Duration::days(1);
+        let expected = after_first.apply_rating(Rating::Good, later).unwrap().0;
+        let from_stale = stale.apply_rating(Rating::Good, later).unwrap().0;
+        assert_ne!(expected.due, from_stale.due);
+
+        let (rated, entry) = domain::rate(&store, stale.id, Rating::Good, later)
+            .await
+            .unwrap();
+        assert_eq!(rated, expected);
+        assert_eq!(entry.rated_at, later);
+        let stored = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        assert_eq!(stored, rated);
     }
 
     #[tokio::test]

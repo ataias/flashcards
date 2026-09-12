@@ -110,8 +110,7 @@ pub async fn rate<S: Store>(
         .await?
         .ok_or(Error::CardNotFound { card_id })?;
     let (updated, entry) = card.apply_rating(rating, now)?;
-    store.commit_review(&updated, &entry).await?;
-    Ok((updated, entry))
+    store.commit_review(&updated, &entry).await
 }
 
 fn normalize_deck_name(name: &str) -> Result<String, Error> {
@@ -336,14 +335,18 @@ mod tests {
             }))
         }
 
-        async fn commit_review(&self, card: &Card, entry: &ReviewLogEntry) -> Result<(), Error> {
+        async fn commit_review(
+            &self,
+            card: &Card,
+            entry: &ReviewLogEntry,
+        ) -> Result<(Card, ReviewLogEntry), Error> {
             let mut inner = self.lock();
             if !inner.cards.contains_key(&card.id) {
                 return Err(Error::CardNotFound { card_id: card.id });
             }
             inner.cards.insert(card.id, card.clone());
             inner.reviews.push(entry.clone());
-            Ok(())
+            Ok((card.clone(), entry.clone()))
         }
     }
 
