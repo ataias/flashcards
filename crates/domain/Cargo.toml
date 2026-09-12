@@ -7,3 +7,6 @@ rust-version.workspace = true
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 fsrs = "6.6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

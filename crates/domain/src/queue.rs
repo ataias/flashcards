@@ -64,7 +64,7 @@ pub fn select_study_queue<Tz: TimeZone>(
     due
 }
 
-fn is_due(card: &Card, now: DateTime<Utc>) -> bool {
+pub(crate) fn is_due(card: &Card, now: DateTime<Utc>) -> bool {
     match (card.memory, card.due) {
         (Some(_), Some(due)) => is_due_at(due, now),
         _ => false,
