@@ -868,3 +868,37 @@ async fn new_cap_consumed_on_enter_learning_including_easy_from_new() {
     let leftover = db::get_card(pool, leftover.id).await.unwrap().unwrap();
     assert!(leftover.is_new());
 }
+
+#[tokio::test]
+async fn review_good_due_can_be_shorter_than_one_day() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Sub-day", "A")
+        .await
+        .unwrap();
+    let last = chrono::Utc::now() - chrono::Duration::days(1);
+    let due = chrono::Utc::now();
+    sqlx::query(
+        "UPDATE cards
+         SET phase = 'review', learning_step = NULL,
+             stability = 0.1, difficulty = 10.0, due = ?, last_review = ?
+         WHERE id = ?",
+    )
+    .bind(due.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(last.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(card.id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let rated = rate_matches_domain(&db, card.id, db::Rating::Good).await;
+    assert_eq!(rated.phase, db::Phase::Review);
+    let rated_at = rated.last_review.unwrap();
+    let due = rated.due.unwrap();
+    assert!(due > rated_at);
+    assert!(
+        due < rated_at + chrono::Duration::days(1),
+        "unfloored FSRS Review due should be able to land before one day, got {due}"
+    );
+}
