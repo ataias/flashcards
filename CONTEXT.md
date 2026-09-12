@@ -13,11 +13,11 @@ A named collection of Cards. On first DB init, a Deck named "Default" is created
 _Avoid_: Folder, set, pile, collection
 
 **Phase**:
-Where a Card sits in the scheduler: **New**, **Learning**, **Review**, or **Relearning**. New has never entered Learning. Learning and Relearning use fixed minute steps; Review uses unfloored FSRS.
+Where a Card sits in the scheduler: **New**, **Learning**, **Review**, or **Relearning**. New has never left New via a Rating. Learning and Relearning use fixed minute steps; Review uses unfloored FSRS.
 _Avoid_: State, status, queue position
 
 **Learning**:
-The short-term step ladder for a Card that just left New (defaults: 1 minute, then 10 minutes). Again restarts at the first step; Hard repeats the current step; Good advances (graduates on the last step); Easy graduates early into Review with FSRS Easy.
+The short-term step ladder after leaving New (defaults: 1 minute, then 10 minutes). The first Rating on a New Card uses Learning rules at step 0. Again restarts at the first step; Hard repeats the current step; Good advances (graduates on the last step); Easy graduates early into Review with FSRS Easy.
 _Avoid_: Drill, cram
 
 **Relearning**:
@@ -25,11 +25,11 @@ Step ladder after Again on a Review Card (default: 10 minutes). Same button rule
 _Avoid_: Lapse queue (as the primary noun)
 
 **Study**:
-A session drawn from one Deck: Cards with due ≤ now (any phase), plus New Cards under the daily cap (20/day per Deck; day = local midnight). Queue policy lives in domain. A separate Anki-like “learn mode” UI is deferred (future grill).
+A session drawn from one Deck: Cards with due ≤ now (any phase), plus New Cards under the daily cap (20/day per Deck; day = local midnight). Queue policy lives in domain. A separate Anki-like “learn mode” UI is deferred (future grill #55).
 _Avoid_: Study all, quiz mode, session (as the primary noun)
 
 **New Card**:
-A Card in phase New. Entering Learning for the first time consumes one slot of the Deck’s daily new-card cap; further Learning steps that day do not.
+A Card in phase New. The first Rating leaves New using Learning rules at step 0 and consumes one slot of the Deck’s daily new-card cap (including Easy that graduates straight to Review); further Learning steps that day do not consume another slot.
 _Avoid_: Unseen, unseen card, freshman
 
 **Review**:
