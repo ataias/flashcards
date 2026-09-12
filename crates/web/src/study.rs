@@ -3,7 +3,7 @@ use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::{Local, Utc};
-use db::{Rating, SqlitePool};
+use domain::{Deck, Rating, Store};
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -38,27 +38,27 @@ pub struct RateForm {
     rating: i64,
 }
 
-pub async fn study_page(
-    State(pool): State<SqlitePool>,
+pub async fn study_page<S: Store>(
+    State(store): State<S>,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some(deck) = db::get_deck(&pool, deck_id).await? else {
+    let Some(deck) = domain::get_deck(&store, deck_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let card = next_card(&pool, deck_id).await?;
+    let card = next_card(&store, deck_id).await?;
     render_full(&deck, card, false, None)
 }
 
-pub async fn reveal(
-    State(pool): State<SqlitePool>,
+pub async fn reveal<S: Store>(
+    State(store): State<S>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let Some(card) = db::get_card(&pool, card_id).await? else {
+    let Some(card) = domain::get_card(&store, card_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     render_review(
-        &pool,
+        &store,
         card.deck_id,
         Some(study_card(&card)),
         true,
@@ -68,18 +68,18 @@ pub async fn reveal(
     .await
 }
 
-pub async fn rate(
-    State(pool): State<SqlitePool>,
+pub async fn rate<S: Store>(
+    State(store): State<S>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<RateForm>,
 ) -> Result<Response, AppError> {
-    let Some(card) = db::get_card(&pool, card_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
     let Some(rating) = Rating::from_grade(form.rating) else {
+        let Some(card) = domain::get_card(&store, card_id).await? else {
+            return Ok(StatusCode::NOT_FOUND.into_response());
+        };
         return render_review(
-            &pool,
+            &store,
             card.deck_id,
             Some(study_card(&card)),
             true,
@@ -88,35 +88,35 @@ pub async fn rate(
         )
         .await;
     };
-    match db::rate_card(&pool, &card, rating, Utc::now()).await {
-        Ok(_) => after_rate(&pool, card.deck_id, &headers).await,
-        Err(db::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
+    match domain::rate(&store, card_id, rating, Utc::now()).await {
+        Ok((card, _)) => after_rate(&store, card.deck_id, &headers).await,
+        Err(domain::Error::CardNotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(err) => Err(err.into()),
     }
 }
 
-async fn after_rate(
-    pool: &SqlitePool,
+async fn after_rate<S: Store>(
+    store: &S,
     deck_id: i64,
     headers: &HeaderMap,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        let card = next_card(pool, deck_id).await?;
-        render_review(pool, deck_id, card, false, None, headers).await
+        let card = next_card(store, deck_id).await?;
+        render_review(store, deck_id, card, false, None, headers).await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}/study")).into_response())
     }
 }
 
-async fn render_review(
-    pool: &SqlitePool,
+async fn render_review<S: Store>(
+    store: &S,
     deck_id: i64,
     card: Option<StudyCard>,
     revealed: bool,
     error: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<Response, AppError> {
-    let Some(deck) = db::get_deck(pool, deck_id).await? else {
+    let Some(deck) = domain::get_deck(store, deck_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     if wants_fragment(headers) {
@@ -135,7 +135,7 @@ async fn render_review(
 }
 
 fn render_full(
-    deck: &db::Deck,
+    deck: &Deck,
     card: Option<StudyCard>,
     revealed: bool,
     error: Option<&str>,
@@ -153,15 +153,13 @@ fn render_full(
     .into_response())
 }
 
-async fn next_card(pool: &SqlitePool, deck_id: i64) -> Result<Option<StudyCard>, AppError> {
-    Ok(db::study_queue(pool, deck_id, Local::now())
+async fn next_card<S: Store>(store: &S, deck_id: i64) -> Result<Option<StudyCard>, AppError> {
+    Ok(domain::next_study_card(store, deck_id, Local::now())
         .await?
-        .into_iter()
-        .next()
         .map(|card| study_card(&card)))
 }
 
-fn study_card(card: &db::Card) -> StudyCard {
+fn study_card(card: &domain::Card) -> StudyCard {
     StudyCard {
         id: card.id,
         front: card.front.clone(),

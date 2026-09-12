@@ -72,5 +72,5 @@ pub trait Store: Send + Sync {
         &self,
         card: &Card,
         entry: &ReviewLogEntry,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Result<(Card, ReviewLogEntry), Error>> + Send;
 }

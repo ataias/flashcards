@@ -3,13 +3,13 @@ use axum::response::{IntoResponse, Response};
 
 #[derive(Debug)]
 pub enum AppError {
-    Db(db::Error),
+    Domain(domain::Error),
     Render(askama::Error),
 }
 
-impl From<db::Error> for AppError {
-    fn from(err: db::Error) -> Self {
-        Self::Db(err)
+impl From<domain::Error> for AppError {
+    fn from(err: domain::Error) -> Self {
+        Self::Domain(err)
     }
 }
 
@@ -22,7 +22,7 @@ impl From<askama::Error> for AppError {
 impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Db(err) => write!(f, "{err}"),
+            Self::Domain(err) => write!(f, "{err}"),
             Self::Render(err) => write!(f, "template error: {err}"),
         }
     }
@@ -31,7 +31,7 @@ impl std::fmt::Display for AppError {
 impl std::error::Error for AppError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Db(err) => Some(err),
+            Self::Domain(err) => Some(err),
             Self::Render(err) => Some(err),
         }
     }

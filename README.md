@@ -21,7 +21,7 @@ v1 is **completed**. v1.1 architecture (deep modules + `Store` seam) is specifie
 
 ## Run
 
-From the repo root (`crates/web` is the workspace default member today; v1.1 moves the binary to `crates/flashcards`):
+From the repo root (`crates/flashcards` is the workspace default member):
 
 ```bash
 cargo run
@@ -47,7 +47,7 @@ The UI is offline (vendored HTMX + CSS; no CDN).
 
 Axum · Askama · HTMX (vendored) · SQLx / SQLite · [`fsrs`](https://crates.io/crates/fsrs)
 
-Workspace today: `crates/web` (binary), `crates/domain`, `crates/db`. v1.1 target: `web` library + `flashcards` binary — see SPEC-v1.1.
+Workspace: `crates/flashcards` (binary), `crates/web` (library), `crates/domain`, `crates/db`.
 
 ## Implementing
 

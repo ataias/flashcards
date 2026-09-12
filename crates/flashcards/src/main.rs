@@ -1,3 +1,4 @@
+use db::SqliteStore;
 use tokio::net::TcpListener;
 use web::Config;
 
@@ -12,6 +13,7 @@ async fn main() {
         eprintln!("{err}");
         std::process::exit(1);
     });
+    let store = SqliteStore::new(pool.clone());
     let decks = db::list_decks(&pool).await.unwrap_or_else(|err| {
         eprintln!("{err}");
         std::process::exit(1);
@@ -29,7 +31,7 @@ async fn main() {
         eprintln!("failed to bind {}: {err}", config.bind);
         std::process::exit(1);
     });
-    let result = axum::serve(listener, web::app(pool.clone())).await;
+    let result = axum::serve(listener, web::app(store)).await;
     pool.close().await;
     if let Err(err) = result {
         eprintln!("server error: {err}");

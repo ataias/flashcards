@@ -107,7 +107,11 @@ impl Store for SqliteStore {
         }))
     }
 
-    async fn commit_review(&self, card: &Card, entry: &ReviewLogEntry) -> Result<(), DomainError> {
+    async fn commit_review(
+        &self,
+        card: &Card,
+        entry: &ReviewLogEntry,
+    ) -> Result<(Card, ReviewLogEntry), DomainError> {
         from_db(commit_review(&self.pool, card, entry).await)
     }
 }
