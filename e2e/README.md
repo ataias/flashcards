@@ -1,6 +1,6 @@
 # E2e harness (Playwright + Lightpanda)
 
-Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
+Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (Users bootstrap → login → study in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
 
 Pins (bump together when upgrading):
 
@@ -30,7 +30,7 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 From the repo root, three processes: the app, Lightpanda, then Playwright.
 
 ```bash
-# 1. App
+# 1. App (empty DB stays up — bootstrap wall, not process exit)
 cargo build -p flashcards
 FLASHCARDS_DB="$(mktemp -d)/flashcards.db" FLASHCARDS_BIND=127.0.0.1:3000 \
   ./target/debug/flashcards
@@ -54,7 +54,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`.
+- `tests/smoke.spec.ts` — Users happy path against an empty temp DB: `/` → bootstrap first admin → login → Default deck (seeded on bootstrap) → create Card → Study reveal + rate → `/about`. Auth and study posts use the real forms (CSRF cookie+field). Needs the binary at `E2E_BASE_URL`; the process must stay up on empty DB (bootstrap wall, not exit). No `seed_ci_admin`.
 
 ## CI-equivalent local run
 
