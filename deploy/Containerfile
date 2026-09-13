@@ -25,6 +25,18 @@ RUN apt-get update \
 
 COPY --chmod=755 --chown=flashcards:flashcards deploy/bin/${TARGETARCH}/flashcards /usr/local/bin/flashcards
 COPY --chown=flashcards:flashcards crates/web/static /src/crates/web/static
+# Pack-time identity (git-sha, optional git-tag) written by publish-image.yml.
+# /about reads these at runtime so cargo need not rebuild just to stamp SHA.
+COPY --chown=flashcards:flashcards crates/web/pack /src/crates/web/pack
+
+# Uncompressed per-arch filesystem size (not GHCR compressed download size).
+# Measured after COPY so identity files are included; the size file itself is tiny.
+RUN mkdir -p /src/crates/web/pack \
+    && bytes=`du -sx --block-size=1 / 2>/dev/null | awk '{print $1; exit}'` \
+    && if [ -n "$bytes" ] && [ "$bytes" -gt 0 ]; then \
+         printf '%s\n' "$bytes" > /src/crates/web/pack/image-size-bytes; \
+       fi \
+    && chown -R flashcards:flashcards /src/crates/web/pack
 
 # Image defaults: listen on all interfaces; SQLite on a writable volume.
 ENV FLASHCARDS_BIND=0.0.0.0:3000

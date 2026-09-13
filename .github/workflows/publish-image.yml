@@ -57,10 +57,8 @@ jobs:
 
       - name: Build release binary
         working-directory: /src
-        env:
-          # Baked into /about by crates/web/build.rs (FLASHCARDS_GIT_SHA, else GITHUB_SHA).
-          FLASHCARDS_GIT_SHA: ${{ github.sha }}
-          GITHUB_SHA: ${{ github.sha }}
+        # Do not stamp FLASHCARDS_GIT_SHA here: /about reads pack-time files
+        # copied in deploy/Containerfile so this binary can be cache-reused.
         run: cargo build --release --locked --bin flashcards
 
       - name: Upload release binary
@@ -97,6 +95,15 @@ jobs:
           set -euo pipefail
           chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
           file deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+
+      - name: Write pack-time identity files
+        run: |
+          set -euo pipefail
+          mkdir -p crates/web/pack
+          printf '%s\n' "${GITHUB_SHA}" > crates/web/pack/git-sha
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            printf '%s\n' "${GITHUB_REF_NAME}" > crates/web/pack/git-tag
+          fi
 
       # QEMU is only for the slim image's apt-get on arm64 (COPY-pack),
       # not for compiling Rust.

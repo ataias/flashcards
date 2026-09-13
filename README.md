@@ -36,13 +36,15 @@ First start creates `./data/flashcards.db` and a Deck named `Default`.
 | `FLASHCARDS_DB` | `./data/flashcards.db` | SQLite path (`data/` is created if missing) |
 | `FLASHCARDS_BIND` | `127.0.0.1:3000` | Listen address (e.g. `0.0.0.0:3000`) |
 
-`GET /about` shows the Cargo package version and the git commit baked at **compile time**. Set `FLASHCARDS_GIT_SHA` when running `cargo build` / `cargo run` (Actions also reads `GITHUB_SHA` if that is unset). If neither is set, the page shows `unknown`.
+`GET /about` shows the Cargo package version, git commit, and **uncompressed** image size (the packed filesystem for that arch — not the compressed GHCR download size).
+
+Published images write small files at pack time under `crates/web/pack/` (`git-sha`, optional `git-tag`, and `image-size-bytes` from `deploy/Containerfile`). `/about` reads those at runtime so the release binary is not rebuilt just to stamp identity. Local `cargo run` / CI without those files show `unknown` (size is omitted as `unknown`). Optional compile-time fallback: set `FLASHCARDS_GIT_SHA` (or `GITHUB_SHA`) when running `cargo build` / `cargo run`.
 
 ## Deploy
 
 The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, clippy, lychee). The runtime app image is [`deploy/Containerfile`](deploy/Containerfile): it **packs a prebuilt binary** (no `cargo` in that image build).
 
-[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) publishes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images. The cargo build step sets `FLASHCARDS_GIT_SHA` / `GITHUB_SHA` so `/about` in the image shows that commit.
+[`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) publishes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images. The publish job writes `crates/web/pack/git-sha` (and `git-tag` on a tag build); `deploy/Containerfile` COPYs those files and records uncompressed per-arch size. `/about` in the image reads them at runtime.
 
 Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**.
 
@@ -67,11 +69,11 @@ Build locally from the repo root. Compile at `/src` so ServeDir’s baked `CARGO
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src \
-  -e FLASHCARDS_GIT_SHA="$(git rev-parse HEAD)" \
   rust:1.98.1-bookworm \
   bash -lc 'apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev pkg-config && cargo build --release --locked --bin flashcards'
-mkdir -p deploy/bin/amd64
+mkdir -p deploy/bin/amd64 crates/web/pack
 cp target/release/flashcards deploy/bin/amd64/flashcards
+git rev-parse HEAD > crates/web/pack/git-sha
 docker build -f deploy/Containerfile -t flashcards:local .
 docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 ```
@@ -81,7 +83,7 @@ docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 1. Home (`/`) lists Decks with due / new counts. Create, rename, or delete Decks. With no Decks, home shows an empty list and a create-Deck form.
 2. Open a Deck to create, edit, or delete plain-text Cards (front / back).
 3. Study a Deck: front → Show answer → Again / Hard / Good / Easy. The queue is due Cards plus up to 20 New Cards per local calendar day.
-4. `/about` shows the package version and the compile-time git commit (not linked from home).
+4. `/about` shows the package version, git commit, and uncompressed image size when pack-time files are present (not linked from home).
 
 The UI is offline (vendored HTMX + CSS; no CDN).
 

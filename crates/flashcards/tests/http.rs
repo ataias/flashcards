@@ -104,6 +104,15 @@ async fn about_shows_commit_identity_and_release_link() {
     );
     assert!(!html.contains("/commit/unknown"));
     assert!(html.contains("https://github.com/ataias/flashcards/releases"));
+    assert!(
+        html.contains("Uncompressed image size"),
+        "expected uncompressed size label, got {html}"
+    );
+    // Local / CI have no pack-time size file; show unknown (not a MiB figure).
+    assert!(
+        html.contains("unknown"),
+        "expected unknown commit and/or size without pack files, got {html}"
+    );
 }
 
 #[tokio::test]
