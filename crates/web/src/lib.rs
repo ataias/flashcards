@@ -21,7 +21,7 @@ use domain::Store;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use session::{RateLimiter, csrf_middleware, require_auth};
+use session::{CookieSecure, RateLimiter, csrf_middleware, require_auth};
 
 fn wants_fragment(headers: &HeaderMap) -> bool {
     headers
@@ -34,7 +34,7 @@ fn static_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/static")
 }
 
-pub fn app<S>(store: S) -> Router
+pub fn app<S>(store: S, cookie_secure: bool) -> Router
 where
     S: Store + Clone + Send + Sync + 'static,
 {
@@ -69,6 +69,7 @@ where
         .merge(protected)
         .layer(from_fn(csrf_middleware))
         .layer(Extension(limiter))
+        .layer(Extension(CookieSecure(cookie_secure)))
         .with_state(store)
         .layer(SetResponseHeaderLayer::overriding(
             CACHE_CONTROL,

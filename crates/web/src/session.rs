@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::Extension;
 use axum::body::{Body, to_bytes};
 use axum::extract::{FromRequestParts, State};
 use axum::http::header::{COOKIE, SET_COOKIE};
@@ -23,6 +24,9 @@ pub const CSRF_FIELD: &str = "csrf";
 const COOKIE_MAX_AGE: i64 = 30 * 24 * 60 * 60;
 const LOGIN_RATE_MAX: usize = 5;
 const LOGIN_RATE_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Debug, Clone, Copy)]
+pub struct CookieSecure(pub bool);
 
 #[derive(Debug, Clone)]
 pub struct CsrfToken(pub String);
@@ -117,12 +121,12 @@ pub fn client_key(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-pub fn set_session_cookie(headers: &mut HeaderMap, session_id: &str) {
-    append_cookie(headers, SESSION_COOKIE, session_id, COOKIE_MAX_AGE);
+pub fn set_session_cookie(headers: &mut HeaderMap, session_id: &str, secure: bool) {
+    append_cookie(headers, SESSION_COOKIE, session_id, COOKIE_MAX_AGE, secure);
 }
 
-pub fn clear_session_cookie(headers: &mut HeaderMap) {
-    append_cookie(headers, SESSION_COOKIE, "", 0);
+pub fn clear_session_cookie(headers: &mut HeaderMap, secure: bool) {
+    append_cookie(headers, SESSION_COOKIE, "", 0, secure);
 }
 
 pub fn rate_limited() -> Response {
@@ -160,7 +164,11 @@ pub async fn require_auth<S: Store>(
     }
 }
 
-pub async fn csrf_middleware(req: Request, next: Next) -> Response {
+pub async fn csrf_middleware(
+    Extension(CookieSecure(secure)): Extension<CookieSecure>,
+    req: Request,
+    next: Next,
+) -> Response {
     if req.uri().path().starts_with("/static") {
         return next.run(req).await;
     }
@@ -194,7 +202,13 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
     let req = Request::from_parts(parts, Body::from(bytes));
     let mut response = next.run(req).await;
     if existing.is_none() {
-        append_cookie(response.headers_mut(), CSRF_COOKIE, &token, COOKIE_MAX_AGE);
+        append_cookie(
+            response.headers_mut(),
+            CSRF_COOKIE,
+            &token,
+            COOKIE_MAX_AGE,
+            secure,
+        );
     }
     response
 }
@@ -209,9 +223,11 @@ pub fn redirect_to_sign_in(headers: &HeaderMap, dest: &str) -> Response {
     response
 }
 
-fn append_cookie(headers: &mut HeaderMap, name: &str, value: &str, max_age: i64) {
-    let cookie =
-        format!("{name}={value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={max_age}");
+fn append_cookie(headers: &mut HeaderMap, name: &str, value: &str, max_age: i64, secure: bool) {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    let cookie = format!(
+        "{name}={value}; Path=/; HttpOnly{secure_attr}; SameSite=Strict; Max-Age={max_age}"
+    );
     headers.append(
         SET_COOKIE,
         HeaderValue::from_str(&cookie).expect("cookie is ascii"),
@@ -266,11 +282,20 @@ mod tests {
     #[test]
     fn session_cookie_is_http_only_secure_strict() {
         let mut headers = HeaderMap::new();
-        set_session_cookie(&mut headers, "deadbeef");
+        set_session_cookie(&mut headers, "deadbeef", true);
         let value = headers[SET_COOKIE].to_str().unwrap();
         assert!(value.contains("session=deadbeef"));
         assert!(value.contains("HttpOnly"));
         assert!(value.contains("Secure"));
+        assert!(value.contains("SameSite=Strict"));
+        assert!(value.contains("Path=/"));
+
+        let mut headers = HeaderMap::new();
+        set_session_cookie(&mut headers, "deadbeef", false);
+        let value = headers[SET_COOKIE].to_str().unwrap();
+        assert!(value.contains("session=deadbeef"));
+        assert!(value.contains("HttpOnly"));
+        assert!(!value.contains("Secure"));
         assert!(value.contains("SameSite=Strict"));
         assert!(value.contains("Path=/"));
     }

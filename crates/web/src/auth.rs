@@ -10,8 +10,8 @@ use serde::Deserialize;
 use crate::assets::Head;
 use crate::error::AppError;
 use crate::session::{
-    AuthUser, CsrfToken, RateLimiter, clear_session_cookie, client_key, load_auth, rate_limited,
-    set_session_cookie,
+    AuthUser, CookieSecure, CsrfToken, RateLimiter, clear_session_cookie, client_key, load_auth,
+    rate_limited, set_session_cookie,
 };
 
 #[derive(Template)]
@@ -68,6 +68,7 @@ pub async fn login_page<S: Store>(
 pub async fn login<S: Store>(
     State(store): State<S>,
     Extension(limiter): Extension<RateLimiter>,
+    Extension(CookieSecure(secure)): Extension<CookieSecure>,
     headers: HeaderMap,
     csrf: CsrfToken,
     Form(form): Form<LoginForm>,
@@ -81,7 +82,7 @@ pub async fn login<S: Store>(
     match domain::authenticate(&store, &form.username, &form.password, Utc::now()).await {
         Ok((_, session)) => {
             let mut response = Redirect::to("/").into_response();
-            set_session_cookie(response.headers_mut(), &session.id);
+            set_session_cookie(response.headers_mut(), &session.id, secure);
             Ok(response)
         }
         Err(domain::Error::InvalidCredentials) => {
@@ -131,21 +132,23 @@ pub async fn bootstrap<S: Store>(
 
 pub async fn logout<S: Store>(
     State(store): State<S>,
+    Extension(CookieSecure(secure)): Extension<CookieSecure>,
     auth: AuthUser,
 ) -> Result<Response, AppError> {
     domain::logout(&store, &auth.session.id).await?;
     let mut response = Redirect::to("/login").into_response();
-    clear_session_cookie(response.headers_mut());
+    clear_session_cookie(response.headers_mut(), secure);
     Ok(response)
 }
 
 pub async fn logout_everywhere<S: Store>(
     State(store): State<S>,
+    Extension(CookieSecure(secure)): Extension<CookieSecure>,
     auth: AuthUser,
 ) -> Result<Response, AppError> {
     domain::logout_everywhere(&store, auth.user.id).await?;
     let mut response = Redirect::to("/login").into_response();
-    clear_session_cookie(response.headers_mut());
+    clear_session_cookie(response.headers_mut(), secure);
     Ok(response)
 }
 
@@ -155,6 +158,7 @@ pub async fn settings_page(auth: AuthUser, csrf: CsrfToken) -> Result<Response, 
 
 pub async fn change_password<S: Store>(
     State(store): State<S>,
+    Extension(CookieSecure(secure)): Extension<CookieSecure>,
     auth: AuthUser,
     csrf: CsrfToken,
     Form(form): Form<PasswordForm>,
@@ -162,7 +166,7 @@ pub async fn change_password<S: Store>(
     match domain::change_password(&store, auth.user.id, &form.current, &form.new_password).await {
         Ok(()) => {
             let mut response = Redirect::to("/login").into_response();
-            clear_session_cookie(response.headers_mut());
+            clear_session_cookie(response.headers_mut(), secure);
             Ok(response)
         }
         Err(domain::Error::InvalidCredentials) => render_settings(

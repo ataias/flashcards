@@ -30,7 +30,7 @@ async fn test_db() -> TestDb {
 }
 
 fn app(db: &TestDb) -> Router {
-    web::app(db.store.clone())
+    web::app(db.store.clone(), false)
 }
 
 async fn request(app: Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
@@ -1568,8 +1568,12 @@ async fn bootstrap_then_login_then_study_requires_session() {
     let session = set_cookie_value(&headers, "session").expect("session cookie");
     let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
     assert!(set_cookie.contains("HttpOnly"));
-    assert!(set_cookie.contains("Secure"));
+    assert!(
+        !set_cookie.contains("Secure"),
+        "local HTTP suite omits Secure so CSRF cookies work on loopback"
+    );
     assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(set_cookie.contains("Path=/"));
 
     let cookies = format!("session={session}; csrf={csrf_cookie}");
     let (status, html) = get_auth(
@@ -1594,6 +1598,44 @@ async fn bootstrap_then_login_then_study_requires_session() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("<h1>Study</h1>"));
+}
+
+#[tokio::test]
+async fn session_cookie_includes_secure_when_configured() {
+    let db = test_db().await;
+    domain::bootstrap_admin(&db.store, "admin", "secret")
+        .await
+        .unwrap();
+    let (status, headers, html) = request(
+        web::app(db.store.clone(), true),
+        Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf_set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(csrf_set_cookie.contains("csrf="));
+    assert!(csrf_set_cookie.contains("Secure"));
+    assert!(csrf_set_cookie.contains("HttpOnly"));
+    assert!(csrf_set_cookie.contains("SameSite=Strict"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+
+    let (status, headers, _) = post_public(
+        web::app(db.store.clone(), true),
+        "/login",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(set_cookie.contains("session="));
+    assert!(set_cookie.contains("Secure"));
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Strict"));
 }
 
 #[tokio::test]

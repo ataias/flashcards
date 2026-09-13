@@ -15,9 +15,9 @@ const BACK = "e2e smoke back";
  * posts go through real forms so CSRF cookie+field stay in sync. No API
  * fallbacks that omit csrf.
  *
- * Lightpanda stores Secure cookies on http:// but does not attach them to
- * form POSTs (Chrome's localhost exception). Re-add them without Secure
- * before each mutating submit.
+ * Loopback HTTP omits cookie Secure (see FLASHCARDS_COOKIE_SECURE). If a
+ * process still emits Secure cookies, Lightpanda will not attach them to
+ * http:// form POSTs — allowHttpCookies copies those without Secure.
  */
 test("bootstrap, login, Default deck, create card, study, about", async ({ page }) => {
   const serverErrors = trackServerErrors(page);
@@ -96,8 +96,9 @@ async function gotoReachable(page: Page, path: string): Promise<void> {
 }
 
 /**
- * Lightpanda will not send Secure cookies on http:// navigations/POSTs.
- * Playwright still exposes them; copy without Secure so the real form works.
+ * No-op when cookies already omit Secure (loopback HTTP default). If Secure
+ * is still set, Lightpanda will not send those cookies on http:// POSTs —
+ * Playwright still exposes them, so copy without Secure.
  */
 async function allowHttpCookies(page: Page): Promise<void> {
   const cookies = await page.context().cookies();

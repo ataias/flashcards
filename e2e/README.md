@@ -21,7 +21,7 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 | `LIGHTPANDA_DIR` | `e2e/.lightpanda` | Install directory for the binary |
 | `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required if you override the version; the install script exits 1 without it |
 
-`FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
+`FLASHCARDS_BIND` / `FLASHCARDS_DB` / `FLASHCARDS_COOKIE_SECURE` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose. Loopback bind omits cookie `Secure` unless you set `FLASHCARDS_COOKIE_SECURE=true`.
 
 ## Local run (binary + Lightpanda)
 
@@ -52,7 +52,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — Users happy path against an empty temp DB: `/` → bootstrap first admin → login → Default deck (seeded on bootstrap) → create Card → Study reveal + rate → `/about`. Auth and study posts use the real forms (CSRF cookie+field). Needs the binary at `E2E_BASE_URL`; the process must stay up on empty DB (bootstrap wall, not exit). The smoke itself is the prepare path — Playwright creates the first admin through the real bootstrap form. There is no separate seed binary or pre-start seed. Lightpanda does not send `Secure` cookies on `http://` form POSTs, so the smoke re-adds those cookies without `Secure` before mutating submits.
+- `tests/smoke.spec.ts` — Users happy path against an empty temp DB: `/` → bootstrap first admin → login → Default deck (seeded on bootstrap) → create Card → Study reveal + rate → `/about`. Auth and study posts use the real forms (CSRF cookie+field). Needs the binary at `E2E_BASE_URL`; the process must stay up on empty DB (bootstrap wall, not exit). The smoke itself is the prepare path — Playwright creates the first admin through the real bootstrap form. There is no separate seed binary or pre-start seed. Loopback HTTP (`FLASHCARDS_BIND=127.0.0.1`, the CI default) omits cookie `Secure` so Safari and Lightpanda can store and send CSRF/session cookies. `allowHttpCookies` is only a fallback if a process still emits `Secure` (`FLASHCARDS_COOKIE_SECURE=true`).
 
 ## CI-equivalent local run
 

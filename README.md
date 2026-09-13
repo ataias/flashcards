@@ -38,6 +38,7 @@ First start creates `./data/flashcards.db`. With v1.3, an empty User table shows
 | --- | --- | --- |
 | `FLASHCARDS_DB` | `./data/flashcards.db` | SQLite path (`data/` is created if missing) |
 | `FLASHCARDS_BIND` | `127.0.0.1:3000` | Listen address (e.g. `0.0.0.0:3000`) |
+| `FLASHCARDS_COOKIE_SECURE` | `false` on loopback bind (`127.0.0.1` / `::1`); `true` otherwise | Session/CSRF `Secure` flag (`true`/`false`/`1`/`0`). Omit on local HTTP so Safari stores cookies; set `true` for HTTPS-facing deploys. |
 
 `GET /about` shows the Cargo package version, git commit, and **uncompressed** image size (the packed filesystem for that arch — not the compressed GHCR download size). `/about` stays reachable without login.
 
@@ -69,6 +70,7 @@ docker run --rm -p 3000:3000 -v flashcards-data:/data ghcr.io/ataias/flashcards:
 | --- | --- | --- |
 | `FLASHCARDS_BIND` | `0.0.0.0:3000` | Listen address (all interfaces so the published port works) |
 | `FLASHCARDS_DB` | `/data/flashcards.db` | SQLite path (mount a volume on `/data`) |
+| `FLASHCARDS_COOKIE_SECURE` | `true` (non-loopback bind) | Set `true` for HTTPS-facing deploys. Set `false` if the published port is reached over plain HTTP (Safari will not store `Secure` cookies on `http://`). |
 
 Build locally from the repo root. Compile at `/src` so ServeDir’s baked `CARGO_MANIFEST_DIR` matches the image, then pack (`amd64` on x86_64 hosts; use `deploy/bin/arm64` on aarch64):
 
