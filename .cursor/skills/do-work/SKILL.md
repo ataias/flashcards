@@ -57,6 +57,8 @@ When `lychee.toml` / CI exist, also run **relative-only** lychee the same way `c
 
 If SQL queries changed: regenerate `.sqlx/` and **commit** it (`SQLX_OFFLINE=true` in CI).
 
+If this PR changes the **minimal happy path** the e2e smoke covers (boot → core study; later bootstrap/login), **update `e2e/` in the same PR** and run the smoke locally or rely on the `e2e` CI job. Do not leave Playwright/Lightpanda smoke stale.
+
 Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
@@ -73,6 +75,7 @@ Until CI exists, still require fmt / clippy / test / build.
   - **Test plan** (commands you ran; name the HTTP/integration suite that still proves the app — do not N/A wiring-only without naming it; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
   - **SPEC/CONTEXT deviations** (or `none`)
   - Stacking notes when base ≠ `main`
+  - Note e2e smoke updates when the happy path changed
 - Use `.github/PULL_REQUEST_TEMPLATE.md` when present.
 
 ## 7. Stack rebase hygiene
@@ -96,9 +99,10 @@ Do **not** open a fresh PR to “fix” a rebase — update the existing issue b
 
 1. Request review from **Code Reviewer**. Do not merge your own PR.
 2. Merge requires **Code Reviewer approval** and **Ataias approval**.
-3. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
-4. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
-5. Before stacking a new PR, run §7 (rebase) so you are not building on a stale base.
+3. Code Reviewer must confirm: if the PR changes the minimal happy path, `e2e/` smoke still covers boot → that path (Playwright + Lightpanda). Reject stale smoke.
+4. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
+5. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
+6. Before stacking a new PR, run §7 (rebase) so you are not building on a stale base.
 
 ## 9. Done
 
