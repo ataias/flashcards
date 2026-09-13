@@ -51,11 +51,21 @@ where
         .route("/cards/{id}/delete", post(cards::delete_card::<S>))
         .route("/cards/{id}/reveal", post(study::reveal::<S>))
         .route("/cards/{id}/rate", post(study::rate::<S>))
+        .route(
+            "/settings",
+            get(auth::settings_page).post(auth::change_password::<S>),
+        )
+        .route("/logout", post(auth::logout::<S>))
+        .route("/logout-everywhere", post(auth::logout_everywhere::<S>))
         .route_layer(from_fn_with_state(store.clone(), require_auth::<S>));
 
     Router::new()
         .route("/about", get(about::about))
-        .route("/login", post(auth::login::<S>))
+        .route("/login", get(auth::login_page::<S>).post(auth::login::<S>))
+        .route(
+            "/bootstrap",
+            get(auth::bootstrap_page::<S>).post(auth::bootstrap::<S>),
+        )
         .merge(protected)
         .layer(from_fn(csrf_middleware))
         .layer(Extension(limiter))
