@@ -1,6 +1,6 @@
 # E2e harness (Playwright + Lightpanda)
 
-Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users path in `tests/smoke.spec.ts`). CI wiring (`ci.yml` `e2e` job) is a follow-up.
+Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
 
 Pins (bump together when upgrading):
 
@@ -54,6 +54,19 @@ Specs:
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
 - `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`.
 
+## CI-equivalent local run
+
+Same orchestration as the `e2e` job (temp DB, ephemeral ports, teardown):
+
+```bash
+cargo build -p flashcards
+cd e2e
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
+./scripts/install-lightpanda.sh
+cd ..
+./e2e/scripts/run-ci.sh
+```
+
 ## Lightpanda only (harness check)
 
 ```bash
@@ -61,8 +74,8 @@ cd e2e
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 ./scripts/install-lightpanda.sh
 ./.lightpanda/lightpanda serve --host 127.0.0.1 --port 9222
-# other terminal:
-npx playwright test
+# other terminal (CDP attach only; smoke needs the binary):
+npx playwright test tests/harness.spec.ts
 ```
 
 ## CDP notes

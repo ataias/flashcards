@@ -68,3 +68,48 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" \
             target \
             "${CARGO_HOME:-$HOME/.cargo}"
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          prefix-key: e2e
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install SQLite headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev pkg-config
+
+      - name: Build flashcards
+        run: cargo build -p flashcards
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install pinned Lightpanda
+        run: ./e2e/scripts/install-lightpanda.sh
+
+      - name: Start server, Lightpanda, and run Playwright smoke
+        run: ./e2e/scripts/run-ci.sh
