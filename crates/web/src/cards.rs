@@ -250,12 +250,15 @@ fn card_rows(cards: Vec<domain::CardText>) -> Vec<CardRow> {
     let now = Utc::now();
     cards
         .into_iter()
-        .map(|card| CardRow {
-            id: card.id,
-            front: card.front,
-            back: card.back,
-            phase: card.phase,
-            due_label: card.due_label(now),
+        .map(|card| {
+            let due_label = card.due_label(now);
+            CardRow {
+                id: card.id,
+                front: card.front,
+                back: card.back,
+                phase: card.phase,
+                due_label,
+            }
         })
         .collect()
 }
