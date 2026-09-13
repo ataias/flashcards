@@ -48,6 +48,8 @@ The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, cl
 
 Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**. Each platform is packed with an explicit `--platform` / `TARGETARCH`, then `docker buildx imagetools create` writes the multi-arch tags.
 
+CI verifies architecture before the image is published: [`scripts/assert-deploy-bin-arch.sh`](scripts/assert-deploy-bin-arch.sh) checks each downloaded binary with `file` and `readelf -h` (amd64 must be ELF x86-64, arm64 must be ELF AArch64); `deploy/Containerfile` runs `file` on `/usr/local/bin/flashcards` and fails the pack if it does not match `TARGETARCH`; after push, `docker buildx imagetools inspect` must list both `linux/amd64` and `linux/arm64`.
+
 Confirm architectures after publish:
 
 ```bash
