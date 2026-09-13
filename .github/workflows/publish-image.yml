@@ -54,11 +54,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "/src"
+          # Include the commit so a cached target/ cannot reuse a binary
+          # compiled with a different or missing FLASHCARDS_GIT_SHA.
+          key: ${{ github.sha }}
 
       - name: Build release binary
         working-directory: /src
         env:
-          # Baked into /about via option_env! (FLASHCARDS_GIT_SHA, else GITHUB_SHA).
+          # Baked into /about by crates/web/build.rs (FLASHCARDS_GIT_SHA, else GITHUB_SHA).
           FLASHCARDS_GIT_SHA: ${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}
         run: cargo build --release --locked --bin flashcards
