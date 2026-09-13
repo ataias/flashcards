@@ -104,7 +104,7 @@ jobs:
       - name: Build flashcards
         run: cargo build -p flashcards
 
-      - name: Install Playwright (no Chromium)
+      - name: Install Playwright
         working-directory: e2e
         run: npm ci
 
