@@ -185,6 +185,7 @@ async fn index_lists_default_deck_and_local_static() {
     assert!(html.contains("/static/app.css"));
     assert!(hashed_asset(&html, "/static/htmx.min.js"));
     assert!(hashed_asset(&html, "/static/app.css"));
+    assert!(hashed_asset(&html, "/static/perf-footer.js"));
     assert!(!html.contains("cdn.jsdelivr"));
     assert!(!html.contains("unpkg.com"));
     assert!(!html.contains("cdnjs"));
@@ -221,6 +222,9 @@ async fn static_files_ignore_content_hash_query() {
     let (status, js) = get(app(&db), "/static/htmx.min.js?h=deadbeefdeadbeef").await;
     assert_eq!(status, StatusCode::OK);
     assert!(js.contains("htmx"));
+    let (status, js) = get(app(&db), "/static/perf-footer.js?h=deadbeefdeadbeef").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(js.contains("page-perf"));
 }
 
 #[tokio::test]
@@ -235,6 +239,7 @@ async fn documents_are_no_store_and_static_is_immutable() {
     assert_eq!(cache_control(&headers), "no-store");
     assert!(hashed_asset(&html, "/static/app.css"));
     assert!(hashed_asset(&html, "/static/htmx.min.js"));
+    assert!(hashed_asset(&html, "/static/perf-footer.js"));
 
     let (status, headers, _) = request_parts(
         app(&db),
@@ -254,6 +259,20 @@ async fn documents_are_no_store_and_static_is_immutable() {
         app(&db),
         Request::builder()
             .uri("/static/htmx.min.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        "public, max-age=31536000, immutable"
+    );
+
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/static/perf-footer.js")
             .body(Body::empty())
             .unwrap(),
     )
@@ -285,6 +304,7 @@ async fn full_pages_share_hashed_head_including_about() {
         assert_eq!(cache_control(&headers), "no-store", "{path}");
         assert!(hashed_asset(&html, "/static/app.css"), "{path}");
         assert!(hashed_asset(&html, "/static/htmx.min.js"), "{path}");
+        assert!(hashed_asset(&html, "/static/perf-footer.js"), "{path}");
         assert!(html.contains("<meta charset=\"utf-8\">"), "{path}");
         assert!(
             html.contains("name=\"viewport\""),
@@ -327,8 +347,8 @@ async fn every_page_has_blank_timing_footer_outside_main() {
         let (status, html) = get(app(&db), path).await;
         assert_eq!(status, StatusCode::OK, "{path}");
         assert!(
-            html.contains("/static/perf-footer.js"),
-            "{path} must load the timing script"
+            hashed_asset(&html, "/static/perf-footer.js"),
+            "{path} must load the hashed timing script"
         );
         // Blank until the browser measures; no server-rendered placeholder.
         assert!(
@@ -354,6 +374,7 @@ async fn htmx_fragments_omit_timing_footer() {
     assert!(!decks.contains("?h="));
     assert!(!decks.contains("/static/app.css"));
     assert!(!decks.contains("/static/htmx.min.js"));
+    assert!(!decks.contains("/static/perf-footer.js"));
 
     let (status, cards) = post_form(
         app(&db),

@@ -22,6 +22,7 @@ pub(crate) struct Head {
     pub title: String,
     pub css_href: String,
     pub htmx_src: String,
+    pub perf_footer_src: String,
 }
 
 impl Head {
@@ -30,6 +31,7 @@ impl Head {
             title: title.into(),
             css_href: hashed_href("app.css")?,
             htmx_src: hashed_href("htmx.min.js")?,
+            perf_footer_src: hashed_href("perf-footer.js")?,
         })
     }
 }
