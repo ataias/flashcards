@@ -1,4 +1,5 @@
 mod about;
+mod admin;
 mod assets;
 mod auth;
 mod build_info;
@@ -57,6 +58,16 @@ where
         )
         .route("/logout", post(auth::logout::<S>))
         .route("/logout-everywhere", post(auth::logout_everywhere::<S>))
+        .route(
+            "/admin/users",
+            get(admin::users_page::<S>).post(admin::create_user::<S>),
+        )
+        .route("/admin/users/{id}/disable", post(admin::disable_user::<S>))
+        .route("/admin/users/{id}/delete", post(admin::delete_user::<S>))
+        .route(
+            "/admin/users/{id}/reset-password",
+            post(admin::reset_password::<S>),
+        )
         .route_layer(from_fn_with_state(store.clone(), require_auth::<S>));
 
     Router::new()

@@ -22,6 +22,7 @@ struct DeckPageTemplate {
     head: Head,
     csrf: String,
     username: String,
+    admin: bool,
 }
 
 #[derive(Template)]
@@ -285,6 +286,7 @@ async fn render_deck_page<S: Store>(
             head: Head::new(format!("{} — Flashcards", deck.name))?,
             csrf: csrf.to_string(),
             username: auth.user.username.clone(),
+            admin: auth.user.admin,
         }
         .render()?,
     )

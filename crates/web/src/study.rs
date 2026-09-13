@@ -22,6 +22,7 @@ struct StudyPageTemplate {
     head: Head,
     csrf: String,
     username: String,
+    admin: bool,
 }
 
 #[derive(Template)]
@@ -66,8 +67,8 @@ pub async fn study_page<S: Store>(
     let deck = domain::get_deck(&store, user_id, deck_id)
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
-    let card = next_card(&store, user_id, deck_id).await?;
-    render_full(&deck, card, false, None, &csrf.0, &auth.user.username)
+    let card = next_card(&store, auth.user.id, deck_id).await?;
+    render_full(&deck, card, false, None, &csrf.0, &auth)
 }
 
 pub async fn reveal<S: Store>(
@@ -177,14 +178,7 @@ async fn render_review<S: Store>(
         )
         .into_response())
     } else {
-        render_full(
-            &deck,
-            view.card,
-            view.revealed,
-            view.error,
-            view.csrf,
-            &auth.user.username,
-        )
+        render_full(&deck, view.card, view.revealed, view.error, view.csrf, auth)
     }
 }
 
@@ -194,7 +188,7 @@ fn render_full(
     revealed: bool,
     error: Option<&str>,
     csrf: &str,
-    username: &str,
+    auth: &AuthUser,
 ) -> Result<Response, AppError> {
     Ok(Html(
         StudyPageTemplate {
@@ -205,7 +199,8 @@ fn render_full(
             error: error.map(str::to_string),
             head: Head::new(format!("Study — {}", deck.name))?,
             csrf: csrf.to_string(),
-            username: username.to_string(),
+            username: auth.user.username.clone(),
+            admin: auth.user.admin,
         }
         .render()?,
     )

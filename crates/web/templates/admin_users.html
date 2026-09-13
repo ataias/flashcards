@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  {% include "head.html" %}
+</head>
+<body>
+  <main>
+    {% include "nav.html" %}
+    <h1>Users</h1>
+    <p>Create Users and disable, delete, or reset passwords. You cannot change your own account.</p>
+    {% if let Some(message) = error %}
+    <p class="error" role="alert">{{ message }}</p>
+    {% endif %}
+    <form class="auth-form" method="post" action="/admin/users">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>
+        Username
+        <input type="text" name="username" required autocomplete="username" autofocus>
+      </label>
+      <label>
+        Initial password
+        <input type="password" name="password" required autocomplete="new-password">
+      </label>
+      <button type="submit">Create User</button>
+    </form>
+    <ul class="user-list">
+      {% for user in users %}
+      <li>
+        <div class="user-heading">
+          <strong>{{ user.username }}</strong>
+          <span class="counts">
+            {% if user.is_admin %}admin{% endif %}
+            {% if user.disabled %}disabled{% endif %}
+            {% if user.is_self %}you{% endif %}
+          </span>
+        </div>
+        {% if !user.is_self %}
+        <div class="user-actions">
+          {% if !user.disabled %}
+          <form class="inline" method="post" action="/admin/users/{{ user.id }}/disable">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit">Disable</button>
+          </form>
+          <form class="inline" method="post" action="/admin/users/{{ user.id }}/reset-password">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label>
+              <span class="visually-hidden">New password for {{ user.username }}</span>
+              <input type="password" name="password" required autocomplete="new-password" placeholder="New password">
+            </label>
+            <button type="submit">Reset password</button>
+          </form>
+          {% endif %}
+          <form class="inline" method="post" action="/admin/users/{{ user.id }}/delete">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" onclick="return confirm('Delete this User and all of their Decks and Cards?')">Delete</button>
+          </form>
+        </div>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </main>
+  {% include "perf-footer.html" %}
+</body>
+</html>

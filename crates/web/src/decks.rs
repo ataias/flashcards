@@ -19,6 +19,7 @@ struct HomeTemplate {
     head: Head,
     csrf: String,
     username: String,
+    admin: bool,
 }
 
 #[derive(Template)]
@@ -46,7 +47,7 @@ pub async fn home<S: Store>(
     auth: AuthUser,
     csrf: CsrfToken,
 ) -> Result<Response, AppError> {
-    render_home(&store, auth.user.id, &auth.user.username, &csrf.0, None).await
+    render_home(&store, &auth, &csrf.0, None).await
 }
 
 pub async fn create_deck<S: Store>(
@@ -118,7 +119,7 @@ async fn after_change<S: Store>(
     if wants_fragment(headers) {
         render_decks(store, auth.user.id, csrf, error).await
     } else if error.is_some() {
-        render_home(store, auth.user.id, &auth.user.username, csrf, error).await
+        render_home(store, auth, csrf, error).await
     } else {
         Ok(Redirect::to("/").into_response())
     }
@@ -126,19 +127,19 @@ async fn after_change<S: Store>(
 
 async fn render_home<S: Store>(
     store: &S,
-    user_id: domain::UserId,
-    username: &str,
+    auth: &AuthUser,
     csrf: &str,
     error: Option<&str>,
 ) -> Result<Response, AppError> {
-    let decks = load_rows(store, user_id).await?;
+    let decks = load_rows(store, auth.user.id).await?;
     Ok(Html(
         HomeTemplate {
             decks,
             error: error.map(str::to_string),
             head: Head::new("Flashcards")?,
             csrf: csrf.to_string(),
-            username: username.to_string(),
+            username: auth.user.username.clone(),
+            admin: auth.user.admin,
         }
         .render()?,
     )

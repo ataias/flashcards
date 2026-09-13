@@ -101,6 +101,25 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AdminUser(pub AuthUser);
+
+impl<S> FromRequestParts<S> for AdminUser
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let auth = AuthUser::from_request_parts(parts, state).await?;
+        if auth.user.admin {
+            Ok(Self(auth))
+        } else {
+            Err(StatusCode::NOT_FOUND.into_response())
+        }
+    }
+}
+
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookie = headers.get(COOKIE)?.to_str().ok()?;
     cookie.split(';').find_map(|part| {

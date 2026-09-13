@@ -35,6 +35,7 @@ struct BootstrapTemplate {
 struct SettingsTemplate {
     csrf: String,
     username: String,
+    admin: bool,
     error: Option<String>,
     head: Head,
 }
@@ -153,7 +154,7 @@ pub async fn logout_everywhere<S: Store>(
 }
 
 pub async fn settings_page(auth: AuthUser, csrf: CsrfToken) -> Result<Response, AppError> {
-    render_settings(&auth.user.username, &csrf.0, None)
+    render_settings(&auth, &csrf.0, None)
 }
 
 pub async fn change_password<S: Store>(
@@ -169,16 +170,12 @@ pub async fn change_password<S: Store>(
             clear_session_cookie(response.headers_mut(), secure);
             Ok(response)
         }
-        Err(domain::Error::InvalidCredentials) => render_settings(
-            &auth.user.username,
-            &csrf.0,
-            Some("Current password is wrong."),
-        ),
-        Err(domain::Error::EmptyPassword) => render_settings(
-            &auth.user.username,
-            &csrf.0,
-            Some("Password cannot be empty."),
-        ),
+        Err(domain::Error::InvalidCredentials) => {
+            render_settings(&auth, &csrf.0, Some("Current password is wrong."))
+        }
+        Err(domain::Error::EmptyPassword) => {
+            render_settings(&auth, &csrf.0, Some("Password cannot be empty."))
+        }
         Err(err) => Err(err.into()),
     }
 }
@@ -207,11 +204,12 @@ fn render_bootstrap(csrf: &str, error: Option<&str>) -> Result<Response, AppErro
     .into_response())
 }
 
-fn render_settings(username: &str, csrf: &str, error: Option<&str>) -> Result<Response, AppError> {
+fn render_settings(auth: &AuthUser, csrf: &str, error: Option<&str>) -> Result<Response, AppError> {
     Ok(Html(
         SettingsTemplate {
             csrf: csrf.to_string(),
-            username: username.to_string(),
+            username: auth.user.username.clone(),
+            admin: auth.user.admin,
             error: error.map(str::to_string),
             head: Head::new("Settings — Flashcards")?,
         }

@@ -107,6 +107,36 @@ async fn signed_in(db: &TestDb) -> Auth {
     }
 }
 
+async fn signed_in_as(db: &TestDb, username: &str, password: &str) -> Auth {
+    let (_, session) = domain::authenticate(&db.store, username, password, Utc::now())
+        .await
+        .unwrap();
+    let (status, headers, html) = request(
+        app(db),
+        Request::builder()
+            .uri("/")
+            .header(header::COOKIE, format!("session={}", session.id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+    Auth {
+        cookies: format!("session={}; csrf={csrf_cookie}", session.id),
+        csrf,
+    }
+}
+
+async fn user_named(db: &TestDb, username: &str) -> domain::User {
+    db.store
+        .get_user_by_username(username)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
 fn extract_csrf(html: &str) -> String {
     let needle = "name=\"csrf\" value=\"";
     let start = html
@@ -1764,4 +1794,232 @@ async fn logout_and_password_change_end_sessions() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/login");
+}
+
+#[tokio::test]
+async fn admin_lists_users_and_create_seeds_default() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let (status, html) = get_auth(app(&db), "/", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("href=\"/admin/users\""));
+
+    let (status, html) = get_auth(app(&db), "/admin/users", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Users</h1>"));
+    assert!(html.contains("Create User"));
+    assert!(html.contains(">admin</strong>"));
+    assert!(html.contains("you"));
+
+    let (status, _) = post_form(
+        app(&db),
+        "/admin/users",
+        "username=member&password=pw",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    let (status, html) = get_auth(app(&db), "/admin/users", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(">member</strong>"));
+    assert!(html.contains("Disable"));
+    assert!(html.contains("Reset password"));
+    assert!(html.contains("Delete"));
+
+    let member = signed_in_as(&db, "member", "pw").await;
+    let (status, html) = get_auth(app(&db), "/", &member).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Default"));
+    assert!(html.contains(">member</span>"));
+    assert!(!html.contains("href=\"/admin/users\""));
+    let member_home = domain::list_home(&db.store, user_named(&db, "member").await.id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(member_home.len(), 1);
+    assert_eq!(member_home[0].deck.name, domain::DEFAULT_DECK_NAME);
+}
+
+#[tokio::test]
+async fn admin_disable_delete_and_reset_password() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let admin_id = user_named(&db, "admin").await.id;
+    domain::admin_create_user(&db.store, admin_id, "member", "pw")
+        .await
+        .unwrap();
+    let member_id = user_named(&db, "member").await.id;
+    let member_auth = signed_in_as(&db, "member", "pw").await;
+
+    let (status, _) = post_form(
+        app(&db),
+        &format!("/admin/users/{member_id}/reset-password"),
+        "password=reset",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        domain::authenticate(&db.store, "member", "pw", Utc::now())
+            .await
+            .is_err()
+    );
+    domain::authenticate(&db.store, "member", "reset", Utc::now())
+        .await
+        .unwrap();
+
+    let (status, headers, _) = request(
+        app(&db),
+        Request::builder()
+            .uri("/")
+            .header(header::COOKIE, &member_auth.cookies)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let member_auth = signed_in_as(&db, "member", "reset").await;
+    let (status, _) = post_form(
+        app(&db),
+        &format!("/admin/users/{member_id}/disable"),
+        "",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(user_named(&db, "member").await.disabled);
+    let (status, headers, _) = request(
+        app(&db),
+        Request::builder()
+            .uri("/")
+            .header(header::COOKIE, &member_auth.cookies)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    domain::admin_create_user(&db.store, admin_id, "doomed", "pw")
+        .await
+        .unwrap();
+    let doomed_id = user_named(&db, "doomed").await.id;
+    let (status, _) = post_form(
+        app(&db),
+        &format!("/admin/users/{doomed_id}/delete"),
+        "",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store
+            .get_user_by_username("doomed")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn admin_guards_reject_self_and_last_admin() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let admin_id = user_named(&db, "admin").await.id;
+
+    let (status, html) = post_form(
+        app(&db),
+        &format!("/admin/users/{admin_id}/disable"),
+        "",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("You cannot disable or delete the last admin."));
+    assert!(!user_named(&db, "admin").await.disabled);
+
+    let (status, html) = post_form(
+        app(&db),
+        &format!("/admin/users/{admin_id}/delete"),
+        "",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("You cannot disable or delete the last admin."));
+    assert!(
+        db.store
+            .get_user_by_username("admin")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let (status, html) = post_form(
+        app(&db),
+        &format!("/admin/users/{admin_id}/reset-password"),
+        "password=newer",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("You cannot disable, delete, or reset your own account."));
+    domain::authenticate(&db.store, "admin", "secret", Utc::now())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn non_admin_admin_routes_are_not_found() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let admin_id = user_named(&db, "admin").await.id;
+    domain::admin_create_user(&db.store, admin_id, "member", "pw")
+        .await
+        .unwrap();
+    let member = signed_in_as(&db, "member", "pw").await;
+    let member_id = user_named(&db, "member").await.id;
+
+    let (status, html) = get_auth(app(&db), "/admin/users", &member).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!html.contains("<h1>Users</h1>"));
+
+    for (path, body) in [
+        ("/admin/users", "username=other&password=pw"),
+        (
+            "/admin/users/{id}/disable".replace("{id}", &admin_id.to_string()),
+            "",
+        ),
+        (
+            "/admin/users/{id}/delete".replace("{id}", &admin_id.to_string()),
+            "",
+        ),
+        (
+            "/admin/users/{id}/reset-password".replace("{id}", &member_id.to_string()),
+            "password=x",
+        ),
+    ] {
+        let (status, html) = post_form(app(&db), &path, body, false, &member).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!html.contains("<h1>Users</h1>"), "{path}");
+    }
+
+    let (status, _) = post_form(
+        app(&db),
+        "/admin/users",
+        "username=other&password=pw",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
 }
