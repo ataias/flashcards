@@ -240,6 +240,8 @@ mod tests {
                     id: card.id,
                     front: card.front.clone(),
                     back: card.back.clone(),
+                    phase: card.phase,
+                    due: card.due,
                 })
                 .collect())
         }
@@ -387,6 +389,8 @@ mod tests {
         assert_eq!(loaded.name, "Default");
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].front, "Q");
+        assert_eq!(cards[0].phase, Phase::New);
+        assert_eq!(cards[0].due, None);
 
         let updated = update_card(&store, created.id, "Q2", "A2").await.unwrap();
         assert_eq!(updated.front, "Q2");

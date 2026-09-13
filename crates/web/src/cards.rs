@@ -2,6 +2,7 @@ use askama::Template;
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use chrono::Utc;
 use domain::Store;
 use serde::Deserialize;
 
@@ -31,6 +32,8 @@ struct CardRow {
     id: i64,
     front: String,
     back: String,
+    phase: domain::Phase,
+    due_label: Option<String>,
 }
 
 impl CardRow {
@@ -244,12 +247,15 @@ async fn render_cards<S: Store>(
 }
 
 fn card_rows(cards: Vec<domain::CardText>) -> Vec<CardRow> {
+    let now = Utc::now();
     cards
         .into_iter()
         .map(|card| CardRow {
             id: card.id,
             front: card.front,
             back: card.back,
+            phase: card.phase,
+            due_label: card.due_label(now),
         })
         .collect()
 }

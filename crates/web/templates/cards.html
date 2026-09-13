@@ -25,6 +25,12 @@
       <div class="card-sides">
         <p class="card-front">{{ card.front }}</p>
         <p class="card-back">{{ card.back }}</p>
+        <p class="card-meta">
+          <span class="card-phase">{{ card.phase }}</span>
+          {% if let Some(due) = card.due_label %}
+          <span class="card-due">{{ due }}</span>
+          {% endif %}
+        </p>
       </div>
       <form class="edit-card" hx-post="/cards/{{ card.id }}" hx-target="#cards" hx-swap="outerHTML">
         <label>

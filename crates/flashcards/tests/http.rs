@@ -80,6 +80,22 @@ async fn set_due(pool: &SqlitePool, card_id: i64, due: chrono::DateTime<chrono::
         .unwrap();
 }
 
+async fn set_review(pool: &SqlitePool, card_id: i64, due: chrono::DateTime<chrono::Utc>) {
+    let last = due - chrono::Duration::days(1);
+    sqlx::query(
+        "UPDATE cards
+         SET phase = 'review', learning_step = NULL,
+             stability = 5.0, difficulty = 5.0, due = ?, last_review = ?
+         WHERE id = ?",
+    )
+    .bind(due.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(last.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(card_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCode, String) {
     let mut builder = Request::builder()
         .method("POST")
@@ -313,6 +329,66 @@ async fn deck_page_lists_cards_empty_then_crud() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn deck_page_shows_phase_and_due() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+
+    let new_card = db::create_card(pool, deck_id, "New front", "New back")
+        .await
+        .unwrap();
+    let due_review = db::create_card(pool, deck_id, "Due front", "Due back")
+        .await
+        .unwrap();
+    let later_review = db::create_card(pool, deck_id, "Later front", "Later back")
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    set_review(pool, due_review.id, now - chrono::Duration::hours(1)).await;
+    set_review(
+        pool,
+        later_review.id,
+        now + chrono::Duration::days(10) + chrono::Duration::hours(1),
+    )
+    .await;
+
+    let listed = db::list_card_text_in_deck(pool, deck_id).await.unwrap();
+    assert_eq!(
+        listed.iter().map(|card| card.id).collect::<Vec<_>>(),
+        vec![new_card.id, due_review.id, later_review.id]
+    );
+    assert_eq!(listed[0].phase, db::Phase::New);
+    assert_eq!(listed[1].phase, db::Phase::Review);
+    assert_eq!(listed[2].phase, db::Phase::Review);
+
+    let (status, html) = get(app(&db), &format!("/decks/{deck_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let new_pos = html.find("New front").expect("new card front");
+    let due_pos = html.find("Due front").expect("due review front");
+    let later_pos = html.find("Later front").expect("later review front");
+    assert!(new_pos < due_pos && due_pos < later_pos, "id order");
+
+    let new_block = &html[new_pos..due_pos];
+    assert!(new_block.contains(r#"<span class="card-phase">New</span>"#));
+    assert!(!new_block.contains("card-due"));
+    assert!(!new_block.contains("due now"));
+    assert!(!new_block.contains("due in"));
+
+    let due_block = &html[due_pos..later_pos];
+    assert!(due_block.contains(r#"<span class="card-phase">Review</span>"#));
+    assert!(due_block.contains(r#"<span class="card-due">due now</span>"#));
+
+    let later_due = listed[2]
+        .due_label(chrono::Utc::now())
+        .expect("later review due label");
+    let later_block = &html[later_pos..];
+    assert!(later_block.contains(r#"<span class="card-phase">Review</span>"#));
+    assert!(later_block.contains(&format!(r#"<span class="card-due">{later_due}</span>"#)));
 }
 
 #[tokio::test]

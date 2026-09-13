@@ -401,21 +401,28 @@ pub async fn list_cards_in_deck(pool: &SqlitePool, deck_id: i64) -> Result<Vec<C
     rows.into_iter().map(card_from_row).collect()
 }
 
-/// Front/back list for a Deck page (no FSRS columns).
+/// Deck page list: front/back plus phase and due, id order.
 pub async fn list_card_text_in_deck(
     pool: &SqlitePool,
     deck_id: i64,
 ) -> Result<Vec<CardText>, Error> {
-    let rows = sqlx::query_as::<_, (i64, String, String)>(
-        "SELECT id, front, back FROM cards WHERE deck_id = ? ORDER BY id",
+    let rows = sqlx::query_as::<_, (i64, String, String, String, Option<String>)>(
+        "SELECT id, front, back, phase, due FROM cards WHERE deck_id = ? ORDER BY id",
     )
     .bind(deck_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, front, back)| CardText { id, front, back })
-        .collect())
+    rows.into_iter()
+        .map(|(id, front, back, phase, due)| {
+            Ok(CardText {
+                id,
+                front,
+                back,
+                phase: phase_from_db(id, &phase)?,
+                due: due.as_deref().map(parse_utc).transpose()?,
+            })
+        })
+        .collect()
 }
 
 /// Create a New Card. Front/back are trimmed; empty sides are rejected.
@@ -1106,6 +1113,8 @@ mod tests {
         assert_eq!(listed[0].id, created.id);
         assert_eq!(listed[0].front, "Q");
         assert_eq!(listed[0].back, "A");
+        assert_eq!(listed[0].phase, domain::Phase::New);
+        assert_eq!(listed[0].due, None);
 
         let updated = update_card(&pool, created.id, "Q2", "A2").await.unwrap();
         assert_eq!(updated.front, "Q2");
