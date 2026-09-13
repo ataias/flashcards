@@ -1,6 +1,6 @@
 # E2e harness (Playwright + Lightpanda)
 
-Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home; the product happy path lands in a follow-up. CI wiring (`ci.yml` `e2e` job) is also a follow-up.
+Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users path in `tests/smoke.spec.ts`). CI wiring (`ci.yml` `e2e` job) is a follow-up.
 
 Pins (bump together when upgrading):
 
@@ -19,7 +19,7 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 | `CDP_URL` | `http://127.0.0.1:9222` | Lightpanda CDP endpoint (`http://` or `ws://`) |
 | `LIGHTPANDA_VERSION` | `0.4.0` | Override for `scripts/install-lightpanda.sh` |
 | `LIGHTPANDA_DIR` | `e2e/.lightpanda` | Install directory for the binary |
-| `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required checksum if you override the version |
+| `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required if you override the version; the install script exits 1 without it |
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
 

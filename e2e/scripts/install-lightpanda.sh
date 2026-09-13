@@ -77,7 +77,18 @@ fi
 
 asset="$(asset_for_host)"
 url="https://github.com/lightpanda-io/browser/releases/download/${LIGHTPANDA_VERSION}/${asset}"
-expected_sha="$(checksum_for_asset "${asset}")"
+expected_sha=""
+if [[ "${LIGHTPANDA_VERSION}" == "0.4.0" ]]; then
+  expected_sha="$(checksum_for_asset "${asset}")"
+fi
+if [[ -n "${LIGHTPANDA_SHA256:-}" ]]; then
+  expected_sha="${LIGHTPANDA_SHA256}"
+fi
+if [[ -z "${expected_sha}" ]]; then
+  echo "error: no checksum for ${LIGHTPANDA_VERSION}/${asset}" >&2
+  echo "Set LIGHTPANDA_SHA256 when overriding LIGHTPANDA_VERSION." >&2
+  exit 1
+fi
 
 mkdir -p "${DEST_DIR}"
 tmp="$(mktemp "${DEST_DIR}/lightpanda.download.XXXXXX")"
@@ -85,14 +96,7 @@ trap 'rm -f "${tmp}"' EXIT
 
 echo "Downloading Lightpanda ${LIGHTPANDA_VERSION} (${asset})"
 curl --fail --location --show-error --output "${tmp}" "${url}"
-
-if [[ "${LIGHTPANDA_VERSION}" == "0.4.0" && -n "${expected_sha}" ]]; then
-  verify_sha256 "${tmp}" "${expected_sha}"
-elif [[ -n "${LIGHTPANDA_SHA256:-}" ]]; then
-  verify_sha256 "${tmp}" "${LIGHTPANDA_SHA256}"
-else
-  echo "warning: no checksum for ${LIGHTPANDA_VERSION}/${asset}; skip verify" >&2
-fi
+verify_sha256 "${tmp}" "${expected_sha}"
 
 chmod a+x "${tmp}"
 mv "${tmp}" "${DEST}"
