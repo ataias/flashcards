@@ -104,7 +104,15 @@ pub async fn create_card<S: Store>(
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match domain::create_card(&store, deck_id, &form.front, &form.back).await {
+    match domain::create_card(
+        &store,
+        crate::LEGACY_USER_ID,
+        deck_id,
+        &form.front,
+        &form.back,
+    )
+    .await
+    {
         Ok(_) => after_change(&store, deck_id, &headers, None, CardDraft::default()).await,
         Err(domain::Error::EmptyCardFront) => {
             after_change(
@@ -136,7 +144,15 @@ pub async fn update_card<S: Store>(
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match domain::update_card(&store, card_id, &form.front, &form.back).await {
+    match domain::update_card(
+        &store,
+        crate::LEGACY_USER_ID,
+        card_id,
+        &form.front,
+        &form.back,
+    )
+    .await
+    {
         Ok(card) => after_change(&store, card.deck_id, &headers, None, CardDraft::default()).await,
         Err(domain::Error::EmptyCardFront) => {
             card_error(
@@ -167,7 +183,7 @@ pub async fn delete_card<S: Store>(
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let deck_id = domain::delete_card(&store, card_id).await?;
+    let deck_id = domain::delete_card(&store, crate::LEGACY_USER_ID, card_id).await?;
     after_change(&store, deck_id, &headers, None, CardDraft::default()).await
 }
 
@@ -178,7 +194,7 @@ async fn card_error<S: Store>(
     error: &str,
     form: &CardForm,
 ) -> Result<Response, AppError> {
-    let card = domain::get_card(store, card_id)
+    let card = domain::get_card(store, crate::LEGACY_USER_ID, card_id)
         .await?
         .ok_or(domain::Error::CardNotFound { card_id })?;
     after_change(
@@ -213,7 +229,7 @@ async fn render_deck_page<S: Store>(
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (deck, cards) = domain::list_deck_cards(store, deck_id).await?;
+    let (deck, cards) = domain::list_deck_cards(store, crate::LEGACY_USER_ID, deck_id).await?;
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
@@ -233,7 +249,7 @@ async fn render_cards<S: Store>(
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (_, cards) = domain::list_deck_cards(store, deck_id).await?;
+    let (_, cards) = domain::list_deck_cards(store, crate::LEGACY_USER_ID, deck_id).await?;
     Ok(Html(
         CardsTemplate {
             deck_id,

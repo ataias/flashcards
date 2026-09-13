@@ -44,7 +44,7 @@ pub async fn create_deck<S: Store>(
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
-    match domain::create_deck(&store, &form.name).await {
+    match domain::create_deck(&store, crate::LEGACY_USER_ID, &form.name).await {
         Ok(_) => after_change(&store, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
             after_change(&store, &headers, Some("Deck name cannot be empty.")).await
@@ -59,7 +59,7 @@ pub async fn rename_deck<S: Store>(
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
-    match domain::rename_deck(&store, deck_id, &form.name).await {
+    match domain::rename_deck(&store, crate::LEGACY_USER_ID, deck_id, &form.name).await {
         Ok(_) => after_change(&store, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
             after_change(&store, &headers, Some("Deck name cannot be empty.")).await
@@ -73,7 +73,7 @@ pub async fn delete_deck<S: Store>(
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    domain::delete_deck(&store, deck_id).await?;
+    domain::delete_deck(&store, crate::LEGACY_USER_ID, deck_id).await?;
     after_change(&store, &headers, None).await
 }
 
@@ -116,7 +116,7 @@ async fn render_decks<S: Store>(store: &S, error: Option<&str>) -> Result<Respon
 }
 
 async fn load_rows<S: Store>(store: &S) -> Result<Vec<DeckRow>, AppError> {
-    let summaries = domain::list_home(store, Local::now()).await?;
+    let summaries = domain::list_home(store, crate::LEGACY_USER_ID, Local::now()).await?;
     Ok(summaries
         .into_iter()
         .map(|summary| DeckRow {

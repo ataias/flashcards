@@ -41,15 +41,31 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             Self::Domain(
-                domain::Error::DeckNotFound { .. } | domain::Error::CardNotFound { .. },
+                domain::Error::DeckNotFound { .. }
+                | domain::Error::CardNotFound { .. }
+                | domain::Error::UserNotFound { .. }
+                | domain::Error::SessionNotFound,
             ) => StatusCode::NOT_FOUND.into_response(),
             Self::Domain(
                 domain::Error::EmptyDeckName
                 | domain::Error::EmptyCardFront
-                | domain::Error::EmptyCardBack,
+                | domain::Error::EmptyCardBack
+                | domain::Error::InvalidUsername
+                | domain::Error::UsernameTaken
+                | domain::Error::EmptyPassword
+                | domain::Error::BootstrapNotAllowed,
             ) => (StatusCode::BAD_REQUEST, "Bad request").into_response(),
+            Self::Domain(domain::Error::InvalidCredentials | domain::Error::UserDisabled) => {
+                (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+            }
+            Self::Domain(
+                domain::Error::NotAdmin
+                | domain::Error::CannotModifySelf
+                | domain::Error::CannotRemoveLastAdmin,
+            ) => (StatusCode::FORBIDDEN, "Forbidden").into_response(),
             err @ (Self::Domain(domain::Error::Schedule(_))
             | Self::Domain(domain::Error::Storage(_))
+            | Self::Domain(domain::Error::PasswordHash)
             | Self::Render(_)) => {
                 eprintln!("internal error: {err}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()

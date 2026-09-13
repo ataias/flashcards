@@ -706,7 +706,9 @@ fn card_from_row(row: CardRow) -> Result<Card, Error> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use domain::{Card, Rating, Store};
+    use domain::{Card, Rating, Store, UserId};
+
+    const USER: UserId = 1;
     use sqlx::sqlite::SqliteConnectOptions;
 
     async fn open_memory() -> SqlitePool {
@@ -1210,16 +1212,22 @@ mod tests {
     #[tokio::test]
     async fn store_commit_review_schedules_from_row_refetched_in_write_txn() {
         let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, "Default").await.unwrap();
-        let stale = domain::create_card(&store, deck.id, "Q", "A")
+        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
+        let stale = domain::create_card(&store, USER, deck.id, "Q", "A")
             .await
             .unwrap();
         assert!(stale.is_new());
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
         let (first, first_entry) = stale.apply_rating(Rating::Easy, now).unwrap();
-        store.commit_review(&first, &first_entry).await.unwrap();
-        let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        store
+            .commit_review(USER, &first, &first_entry)
+            .await
+            .unwrap();
+        let after_first = domain::get_card(&store, USER, stale.id)
+            .await
+            .unwrap()
+            .unwrap();
 
         let later = now + chrono::Duration::days(1);
         let expected = after_first.apply_rating(Rating::Good, later).unwrap().0;
@@ -1230,76 +1238,93 @@ mod tests {
         );
 
         let (persisted, persisted_entry) = store
-            .commit_review(&from_stale, &stale_entry)
+            .commit_review(USER, &from_stale, &stale_entry)
             .await
             .unwrap();
         assert_eq!(persisted, expected);
         assert_ne!(persisted.due, from_stale.due);
         assert_eq!(persisted_entry.rating, Rating::Good);
         assert_eq!(persisted_entry.rated_at, later);
-        let stored = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        let stored = domain::get_card(&store, USER, stale.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(stored, persisted);
     }
 
     #[tokio::test]
     async fn domain_rate_returns_card_that_was_persisted() {
         let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, "Default").await.unwrap();
-        let stale = domain::create_card(&store, deck.id, "Q", "A")
+        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
+        let stale = domain::create_card(&store, USER, deck.id, "Q", "A")
             .await
             .unwrap();
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        domain::rate(&store, stale.id, Rating::Easy, now)
+        domain::rate(&store, USER, stale.id, Rating::Easy, now)
             .await
             .unwrap();
-        let after_first = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        let after_first = domain::get_card(&store, USER, stale.id)
+            .await
+            .unwrap()
+            .unwrap();
         let later = now + chrono::Duration::days(1);
         let expected = after_first.apply_rating(Rating::Good, later).unwrap().0;
         let from_stale = stale.apply_rating(Rating::Good, later).unwrap().0;
         assert_ne!(expected.due, from_stale.due);
 
-        let (rated, entry) = domain::rate(&store, stale.id, Rating::Good, later)
+        let (rated, entry) = domain::rate(&store, USER, stale.id, Rating::Good, later)
             .await
             .unwrap();
         assert_eq!(rated, expected);
         assert_eq!(entry.rated_at, later);
-        let stored = domain::get_card(&store, stale.id).await.unwrap().unwrap();
+        let stored = domain::get_card(&store, USER, stale.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(stored, rated);
     }
 
     #[tokio::test]
     async fn store_use_cases_round_trip_and_delete_last_deck() {
         let store = SqliteStore::new(open_memory().await);
-        let seeded = domain::list_home(&store, Utc::now()).await.unwrap();
+        let seeded = domain::list_home(&store, USER, Utc::now()).await.unwrap();
         assert_eq!(seeded.len(), 1);
         assert_eq!(seeded[0].deck.name, DEFAULT_DECK_NAME);
 
-        let extra = domain::create_deck(&store, "Spanish").await.unwrap();
-        let card = domain::create_card(&store, extra.id, "Q", "A")
+        let extra = domain::create_deck(&store, USER, "Spanish").await.unwrap();
+        let card = domain::create_card(&store, USER, extra.id, "Q", "A")
             .await
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        domain::rate(&store, card.id, Rating::Good, now)
+        domain::rate(&store, USER, card.id, Rating::Good, now)
             .await
             .unwrap();
-        let stored = domain::get_card(&store, card.id).await.unwrap().unwrap();
+        let stored = domain::get_card(&store, USER, card.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!stored.is_new());
         assert_eq!(stored.phase, domain::Phase::Learning);
         assert_eq!(stored.learning_step, Some(1));
         assert_eq!(stored.memory, None);
 
-        domain::delete_deck(&store, seeded[0].deck.id)
+        domain::delete_deck(&store, USER, seeded[0].deck.id)
             .await
             .unwrap();
-        domain::delete_deck(&store, extra.id).await.unwrap();
-        assert!(domain::list_home(&store, now).await.unwrap().is_empty());
+        domain::delete_deck(&store, USER, extra.id).await.unwrap();
+        assert!(
+            domain::list_home(&store, USER, now)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(matches!(
-            domain::delete_deck(&store, extra.id).await.unwrap_err(),
+            domain::delete_deck(&store, USER, extra.id).await.unwrap_err(),
             domain::Error::DeckNotFound { deck_id } if deck_id == extra.id
         ));
         assert!(matches!(
-            domain::rate(&store, card.id, Rating::Good, now)
+            domain::rate(&store, USER, card.id, Rating::Good, now)
                 .await
                 .unwrap_err(),
             domain::Error::CardNotFound { card_id } if card_id == card.id
@@ -1371,15 +1396,18 @@ mod tests {
     #[tokio::test]
     async fn store_commit_review_round_trips_learning_fields() {
         let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, "Default").await.unwrap();
-        let card = domain::create_card(&store, deck.id, "Q", "A")
+        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
+        let card = domain::create_card(&store, USER, deck.id, "Q", "A")
             .await
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
         let (updated, entry) = card.apply_rating(Rating::Good, now).unwrap();
-        store.commit_review(&updated, &entry).await.unwrap();
+        store.commit_review(USER, &updated, &entry).await.unwrap();
 
-        let stored = domain::get_card(&store, card.id).await.unwrap().unwrap();
+        let stored = domain::get_card(&store, USER, card.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.phase, domain::Phase::Learning);
         assert_eq!(stored.learning_step, Some(1));
         assert_eq!(stored.memory, None);
