@@ -54,7 +54,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — Users happy path against an empty temp DB: `/` → bootstrap first admin → login → Default deck (seeded on bootstrap) → create Card → Study reveal + rate → `/about`. Auth and study posts use the real forms (CSRF cookie+field). Needs the binary at `E2E_BASE_URL`; the process must stay up on empty DB (bootstrap wall, not exit). No `seed_ci_admin`.
+- `tests/smoke.spec.ts` — Users happy path against an empty temp DB: `/` → bootstrap first admin → login → Default deck (seeded on bootstrap) → create Card → Study reveal + rate → `/about`. Auth and study posts use the real forms (CSRF cookie+field). Needs the binary at `E2E_BASE_URL`; the process must stay up on empty DB (bootstrap wall, not exit). No `seed_ci_admin`. Lightpanda does not send `Secure` cookies on `http://` form POSTs, so the smoke re-adds those cookies without `Secure` before mutating submits.
 
 ## CI-equivalent local run
 
