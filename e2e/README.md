@@ -20,11 +20,11 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 | `LIGHTPANDA_VERSION` | `0.4.0` | Override for `scripts/install-lightpanda.sh` |
 | `LIGHTPANDA_DIR` | `e2e/.lightpanda` | Install directory for the binary |
 | `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required if you override the version; the install script exits 1 without it |
-| `FLASHCARDS_SEED_BIN` | `target/debug/seed_ci_admin` | CI helper that seeds one admin + Default into the temp DB |
+| `FLASHCARDS_SEED_BIN` | `target/debug/seed_ci_admin` | Stack-only CI harness helper (not product behavior) |
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
 
-`run-ci.sh` runs `seed_ci_admin` on the temp DB **before** starting the binary (`e2e` / `e2e-secret`). This is a **#96 bridge** so the required pre-Users smoke can boot while `main` stays fail-closed on an empty User table. **#98 must drop this pre-start seed** when restacked — that PR already has bootstrap → login smoke.
+`run-ci.sh` runs `seed_ci_admin` on the temp DB **before** starting the binary (`e2e` / `e2e-secret`, via `domain::bootstrap_admin` + `SqliteStore`). This is a **stack-only CI harness** for #96 — not product behavior. Production `main` stays fail-closed on an empty User table. **Do not merge #96 alone**; merge bottom-up through #98 so production never ships empty-DB-exit without bootstrap UI. **#98 must drop this pre-start seed** and keep bootstrap → login smoke.
 
 ## Local run (binary + Lightpanda)
 

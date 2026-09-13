@@ -72,8 +72,8 @@ on_err() {
 trap on_err ERR
 trap cleanup EXIT
 
-# #96 bridge: seed one admin + Default so the fail-closed binary can boot.
-# #98 must drop this pre-start seed when restacked (bootstrap UI + login smoke).
+# Stack-only CI harness (not product behavior): seed one admin + Default
+# so the fail-closed binary can boot. #98 must drop this pre-start seed.
 "${SEED_BIN}" "${DB_PATH}"
 
 FLASHCARDS_DB="${DB_PATH}" FLASHCARDS_BIND="127.0.0.1:${APP_PORT}" \

@@ -7,8 +7,8 @@ const BACK = "e2e smoke back";
 
 /**
  * Pre-Users happy path: home → Default deck → create Card →
- * Study reveal + rate → /about. CI seeds one admin via
- * `seed_ci_admin` before starting the binary (#96 bridge).
+ * Study reveal + rate → /about. CI harness seeds one admin via
+ * `seed_ci_admin` before starting the binary (stack-only; not product).
  */
 test("home, Default deck, create card, study, about", async ({ page }) => {
   const serverErrors = trackServerErrors(page);

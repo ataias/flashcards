@@ -1,4 +1,6 @@
-//! CI-only helper: seed one admin + Default into an empty SQLite path.
+//! Stack-only CI harness: seed one admin + Default into an empty SQLite path
+//! via `domain::bootstrap_admin` + `SqliteStore` (not raw SQL). Not product
+//! behavior — production `main` stays fail-closed on an empty User table.
 //! `e2e/scripts/run-ci.sh` runs this before starting the flashcards binary.
 
 use db::SqliteStore;
