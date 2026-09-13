@@ -1,7 +1,7 @@
 use axum::extract::{FromRequestParts, State};
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::{extract::Request, middleware::Next};
 use chrono::Utc;
