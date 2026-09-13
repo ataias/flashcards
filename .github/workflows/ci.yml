@@ -69,8 +69,6 @@ jobs:
             target \
             "${CARGO_HOME:-$HOME/.cargo}"
 
-  # Required status check with `checks`. Ataias: add `e2e` to branch
-  # protection when this job exists on `main` (GitHub will not infer it).
   e2e:
     name: e2e
     runs-on: ubuntu-latest
