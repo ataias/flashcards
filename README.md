@@ -1,18 +1,19 @@
 # Flashcards
 
-Simple Anki-like flashcards: **Rust** backend + **HTMX** UI. Multi-user (private Decks per User), local SQLite, FSRS scheduling.
+Simple Anki-like flashcards: **Rust** backend + **HTMX** UI. Multi-user (private Decks per User + Courses), local SQLite, FSRS scheduling.
 
 Repo: https://github.com/ataias/flashcards
 
 ## Status
 
-v1, v1.1, and v1.2 are on `main`. **v1.3** (Users + private spaces + login) is specified; implementation tracked from the Users parent issue.
+v1–v1.2 on `main`. **v1.3** (Users) implementing under [#85](https://github.com/ataias/flashcards/issues/85). **v1.4** (Courses) specified; implement only after v1.3 and an explicit trigger ([#91](https://github.com/ataias/flashcards/issues/91)).
 
 - [`CONTEXT.md`](CONTEXT.md) — domain language
 - [`docs/SPEC-v1.md`](docs/SPEC-v1.md) — completed v1 product/spec
 - [`docs/SPEC-v1.1.md`](docs/SPEC-v1.1.md) — accepted v1.1 architecture
 - [`docs/SPEC-v1.2.md`](docs/SPEC-v1.2.md) — accepted v1.2 learning steps
 - [`docs/SPEC-v1.3.md`](docs/SPEC-v1.3.md) — accepted v1.3 Users / private spaces
+- [`docs/SPEC-v1.4.md`](docs/SPEC-v1.4.md) — accepted v1.4 Courses
 - [`docs/SPEC-ci.md`](docs/SPEC-ci.md) — accepted CI spec
 - [`docs/adr/`](docs/adr/) — architecture decisions
 - [`.cursor/skills/do-work/SKILL.md`](.cursor/skills/do-work/SKILL.md) — how Full Stack implements issues / PRs
@@ -84,11 +85,11 @@ docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 ## Use
 
 1. First visit on an empty DB: create the bootstrap admin, then log in.
-2. Home (`/`) lists **your** Decks with due / new counts. Create, rename, or delete Decks. With no Decks, home shows an empty list and a create-Deck form.
+2. Home (`/`) lists **your** Decks with due / new counts (and, in v1.4, a Courses section for subscriptions). Create, rename, or delete Decks. With no Decks, home shows an empty list and a create-Deck form.
 3. Open a Deck to create, edit, or delete plain-text Cards (front / back).
 4. Study a Deck: front → Show answer → Again / Hard / Good / Easy. The queue is due Cards plus up to 20 New Cards per local calendar day.
 5. `/about` shows the package version, git commit, and uncompressed image size when pack-time files are present (public; not linked from home).
-6. Admin (bootstrap only): manage Users (create / disable / delete / reset password).
+6. Admin (bootstrap only): manage Users; in v1.4 also manage Courses.
 
 The UI is offline (vendored HTMX + CSS; no CDN).
 
@@ -100,4 +101,4 @@ Workspace: `crates/flashcards` (binary), `crates/web` (library), `crates/domain`
 
 ## Implementing
 
-Full Stack must follow **do-work**: one child issue per PR, pre-PR cargo/lychee gates, Code Reviewer then Ataias approval, stacking allowed after Code Reviewer approves unless the ticket needs `main`.
+Full Stack must follow **do-work**: one child issue per PR, pre-PR cargo/lychee gates, Code Reviewer then Ataias approval, stacking allowed after Code Reviewer approves unless the ticket needs `main`. Do not start v1.4 Courses until v1.3 Users is done and Ataias triggers.
