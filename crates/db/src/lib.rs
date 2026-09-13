@@ -244,6 +244,7 @@ async fn first_or_insert_user_on(
     .map_err(Into::into)
 }
 
+#[cfg(test)]
 async fn first_or_insert_user(pool: &SqlitePool) -> Result<i64, Error> {
     if let Some(id) = sqlx::query_scalar("SELECT id FROM users ORDER BY id LIMIT 1")
         .fetch_optional(pool)
@@ -296,15 +297,22 @@ pub async fn get_deck(pool: &SqlitePool, deck_id: i64) -> Result<Option<Deck>, E
 }
 
 /// Create a Deck. Leading/trailing whitespace is trimmed; empty names are rejected.
-/// Unscoped callers (tests) attach the Deck to an existing User, or insert one.
-pub async fn create_deck(pool: &SqlitePool, name: &str) -> Result<Deck, Error> {
+/// The caller supplies the owning `user_id`; this helper does not invent a User.
+pub async fn create_deck(pool: &SqlitePool, user_id: i64, name: &str) -> Result<Deck, Error> {
     let name = normalize_deck_name(name)?;
-    let user_id = first_or_insert_user(pool).await?;
-    let id = sqlx::query_scalar("INSERT INTO decks (name, user_id) VALUES (?, ?) RETURNING id")
-        .bind(&name)
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
+    let id =
+        match sqlx::query_scalar("INSERT INTO decks (name, user_id) VALUES (?, ?) RETURNING id")
+            .bind(&name)
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(id) => id,
+            Err(err) if is_foreign_key_violation(&err) => {
+                return Err(Error::UserNotFound { user_id });
+            }
+            Err(err) => return Err(err.into()),
+        };
     Ok(Deck { id, name })
 }
 
@@ -1107,7 +1115,8 @@ mod tests {
     #[tokio::test]
     async fn create_deck_inserts_trimmed_name() {
         let pool = open_memory().await;
-        let created = create_deck(&pool, "  Spanish  ").await.unwrap();
+        let user_id = first_or_insert_user(&pool).await.unwrap();
+        let created = create_deck(&pool, user_id, "  Spanish  ").await.unwrap();
         assert_eq!(created.name, "Spanish");
         let fetched = get_deck(&pool, created.id).await.unwrap().unwrap();
         assert_eq!(fetched, created);
@@ -1124,8 +1133,9 @@ mod tests {
     #[tokio::test]
     async fn create_deck_rejects_empty_or_whitespace_name() {
         let pool = open_memory().await;
+        let user_id = first_or_insert_user(&pool).await.unwrap();
         assert!(matches!(
-            create_deck(&pool, "   ").await.unwrap_err(),
+            create_deck(&pool, user_id, "   ").await.unwrap_err(),
             Error::EmptyDeckName
         ));
         assert_eq!(list_decks(&pool).await.unwrap().len(), 1);
