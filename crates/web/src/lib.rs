@@ -1,3 +1,5 @@
+mod about;
+mod build_info;
 mod cards;
 mod config;
 mod decks;
@@ -29,6 +31,7 @@ where
 {
     Router::new()
         .route("/", get(decks::home::<S>))
+        .route("/about", get(about::about))
         .route("/decks", post(decks::create_deck::<S>))
         .route("/decks/{id}", get(cards::deck_page::<S>))
         .route("/decks/{id}/rename", post(decks::rename_deck::<S>))
