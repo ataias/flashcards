@@ -65,15 +65,13 @@ pub fn select_study_queue<Tz: TimeZone>(
 }
 
 pub(crate) fn is_due(card: &Card, now: DateTime<Utc>) -> bool {
-    match (card.memory, card.due) {
-        (Some(_), Some(due)) => is_due_at(due, now),
-        _ => false,
-    }
+    card.due.is_some_and(|due| is_due_at(due, now))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{LEARNING_STEPS, Phase};
     use chrono::{Duration, FixedOffset, TimeZone, Utc};
     use fsrs::MemoryState;
 
@@ -87,6 +85,8 @@ mod tests {
             deck_id: 1,
             front: "front".into(),
             back: "back".into(),
+            phase: Phase::New,
+            learning_step: None,
             memory: None,
             due: None,
             last_review: None,
@@ -99,12 +99,28 @@ mod tests {
             deck_id: 1,
             front: "front".into(),
             back: "back".into(),
+            phase: Phase::Review,
+            learning_step: None,
             memory: Some(MemoryState {
                 stability: 2.0,
                 difficulty: 5.0,
             }),
             due: Some(due),
             last_review: Some(due - Duration::days(3)),
+        }
+    }
+
+    fn learning_card(id: i64, due: DateTime<Utc>) -> Card {
+        Card {
+            id,
+            deck_id: 1,
+            front: "front".into(),
+            back: "back".into(),
+            phase: Phase::Learning,
+            learning_step: Some(0),
+            memory: None,
+            due: Some(due),
+            last_review: Some(due - LEARNING_STEPS[0]),
         }
     }
 
@@ -224,5 +240,42 @@ mod tests {
         let new = new_card(1);
         let queue = select_study_queue(&[new, due], &[], now);
         assert_eq!(ids(&queue), vec![50, 1]);
+    }
+
+    #[test]
+    fn learning_card_is_excluded_until_step_elapses() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let learning = learning_card(3, now_utc + LEARNING_STEPS[0]);
+        assert!(select_study_queue(&[learning.clone()], &[], now).is_empty());
+        let later = now + LEARNING_STEPS[0];
+        assert_eq!(ids(&select_study_queue(&[learning], &[], later)), vec![3]);
+    }
+
+    #[test]
+    fn easy_from_new_consumes_a_new_cap_slot() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let graduated = reviewed_card(1, now_utc + Duration::days(3));
+        let new_cards: Vec<_> = (2..=22).map(new_card).collect();
+        let mut cards = vec![graduated];
+        cards.extend(new_cards);
+        let queue = select_study_queue(&cards, &[now], now);
+        assert_eq!(ids(&queue), (2..=20).collect::<Vec<_>>());
+        assert_eq!(queue.len(), NEW_CARDS_PER_LOCAL_DAY - 1);
+        assert!(queue.iter().all(Card::is_new));
+    }
+
+    #[test]
+    fn left_new_cards_are_not_counted_as_new() {
+        let tz = tz_plus_9();
+        let now = tz.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
+        let now_utc = now.with_timezone(&Utc);
+        let learning = learning_card(2, now_utc + Duration::hours(1));
+        let new = new_card(1);
+        let queue = select_study_queue(&[learning, new], &[now], now);
+        assert_eq!(ids(&queue), vec![1]);
     }
 }
