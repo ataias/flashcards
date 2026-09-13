@@ -454,10 +454,11 @@ async fn every_page_has_blank_timing_footer_outside_main() {
         "/".to_string(),
         format!("/decks/{deck_id}"),
         format!("/decks/{deck_id}/study"),
+        "/settings".to_string(),
         "/about".to_string(),
     ];
     for path in &paths {
-        let (status, html) = if path == "/about" {
+        let (status, html) = if path.as_str() == "/about" {
             get(app(&db), path).await
         } else {
             get_auth(app(&db), path, &auth).await
@@ -506,8 +507,14 @@ async fn htmx_fragments_omit_timing_footer() {
     assert!(!cards.contains("page-perf"));
 
     let card_id = db::list_cards_in_deck(&db.pool, deck_id).await.unwrap()[0].id;
-    let (status, review) =
-        post_form(app(&db), &format!("/cards/{card_id}/reveal"), "", true, &auth).await;
+    let (status, review) = post_form(
+        app(&db),
+        &format!("/cards/{card_id}/reveal"),
+        "",
+        true,
+        &auth,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(!review.contains("page-perf"));
 }
