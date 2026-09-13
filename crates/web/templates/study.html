@@ -6,6 +6,7 @@
   <title>Study — {{ deck_name }}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/perf-footer.js" defer></script>
 </head>
 <body>
   <main>
@@ -13,5 +14,6 @@
     <h1>Study</h1>
     {% include "review.html" %}
   </main>
+  {% include "perf-footer.html" %}
 </body>
 </html>
