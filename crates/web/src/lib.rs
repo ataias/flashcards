@@ -18,7 +18,8 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Placeholder owner until HTTP sessions identify the current User.
-/// `SqliteStore` ignores it until decks persist an owner.
+/// With no users row yet, Store treats this as the pre-login orphan
+/// space (first-open Default) so the current UI keeps working.
 pub(crate) const LEGACY_USER_ID: domain::UserId = 1;
 
 fn wants_fragment(headers: &HeaderMap) -> bool {

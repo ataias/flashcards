@@ -13,6 +13,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 pub use sqlx::SqlitePool;
 
 mod store;
+mod users;
 pub use store::SqliteStore;
 
 pub const DEFAULT_DECK_NAME: &str = "Default";
@@ -52,6 +53,10 @@ pub enum Error {
     CardNotFound {
         card_id: i64,
     },
+    UsernameTaken,
+    UserNotFound {
+        user_id: i64,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -84,6 +89,8 @@ impl std::fmt::Display for Error {
             Self::EmptyCardBack => write!(f, "Card back cannot be empty"),
             Self::DeckNotFound { deck_id } => write!(f, "deck {deck_id} not found"),
             Self::CardNotFound { card_id } => write!(f, "card {card_id} not found"),
+            Self::UsernameTaken => write!(f, "username is already taken"),
+            Self::UserNotFound { user_id } => write!(f, "user {user_id} not found"),
         }
     }
 }
@@ -103,7 +110,9 @@ impl std::error::Error for Error {
             | Self::EmptyCardFront
             | Self::EmptyCardBack
             | Self::DeckNotFound { .. }
-            | Self::CardNotFound { .. } => None,
+            | Self::CardNotFound { .. }
+            | Self::UsernameTaken
+            | Self::UserNotFound { .. } => None,
         }
     }
 }
@@ -134,6 +143,8 @@ impl From<Error> for domain::Error {
             Error::EmptyCardBack => Self::EmptyCardBack,
             Error::DeckNotFound { deck_id } => Self::DeckNotFound { deck_id },
             Error::CardNotFound { card_id } => Self::CardNotFound { card_id },
+            Error::UsernameTaken => Self::UsernameTaken,
+            Error::UserNotFound { user_id } => Self::UserNotFound { user_id },
             Error::Schedule(err) => Self::Schedule(err),
             other => Self::storage(other),
         }
@@ -274,7 +285,7 @@ pub async fn rename_deck(pool: &SqlitePool, deck_id: i64, name: &str) -> Result<
     Ok(Deck { id: deck_id, name })
 }
 
-fn normalize_deck_name(name: &str) -> Result<String, Error> {
+pub(crate) fn normalize_deck_name(name: &str) -> Result<String, Error> {
     let name = name.trim();
     if name.is_empty() {
         Err(Error::EmptyDeckName)
@@ -359,7 +370,7 @@ pub async fn list_deck_summaries<Tz: TimeZone>(
     Ok(summaries)
 }
 
-type CardRow = (
+pub(crate) type CardRow = (
     i64,
     i64,
     String,
@@ -495,7 +506,7 @@ pub async fn delete_card(pool: &SqlitePool, card_id: i64) -> Result<i64, Error> 
         .ok_or(Error::CardNotFound { card_id })
 }
 
-fn map_missing_parent_deck(err: sqlx::Error, deck_id: i64) -> Error {
+pub(crate) fn map_missing_parent_deck(err: sqlx::Error, deck_id: i64) -> Error {
     if is_foreign_key_violation(&err) {
         Error::DeckNotFound { deck_id }
     } else {
@@ -503,7 +514,7 @@ fn map_missing_parent_deck(err: sqlx::Error, deck_id: i64) -> Error {
     }
 }
 
-fn is_foreign_key_violation(err: &sqlx::Error) -> bool {
+pub(crate) fn is_foreign_key_violation(err: &sqlx::Error) -> bool {
     let sqlx::Error::Database(db_err) = err else {
         return false;
     };
@@ -511,7 +522,15 @@ fn is_foreign_key_violation(err: &sqlx::Error) -> bool {
         || db_err.message().contains("FOREIGN KEY constraint failed")
 }
 
-fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
+pub(crate) fn is_unique_violation(err: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(db_err) = err else {
+        return false;
+    };
+    matches!(db_err.code().as_deref(), Some("2067" | "1555"))
+        || db_err.message().contains("UNIQUE constraint failed")
+}
+
+pub(crate) fn normalize_card_side(text: &str, front: bool) -> Result<String, Error> {
     let text = text.trim();
     if text.is_empty() {
         Err(if front {
@@ -627,11 +646,11 @@ async fn write_review_on(
     Ok(())
 }
 
-fn rfc3339(instant: DateTime<Utc>) -> String {
+pub(crate) fn rfc3339(instant: DateTime<Utc>) -> String {
     instant.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-fn parse_utc(value: &str) -> Result<DateTime<Utc>, Error> {
+pub(crate) fn parse_utc(value: &str) -> Result<DateTime<Utc>, Error> {
     DateTime::parse_from_rfc3339(value)
         .map(|parsed| parsed.with_timezone(&Utc))
         .map_err(|source| Error::InvalidTimestamp {
@@ -649,7 +668,7 @@ fn phase_to_db(phase: domain::Phase) -> &'static str {
     }
 }
 
-fn phase_from_db(card_id: i64, value: &str) -> Result<domain::Phase, Error> {
+pub(crate) fn phase_from_db(card_id: i64, value: &str) -> Result<domain::Phase, Error> {
     match value {
         "new" => Ok(domain::Phase::New),
         "learning" => Ok(domain::Phase::Learning),
@@ -674,7 +693,7 @@ fn learning_step_from_db(card_id: i64, value: Option<i64>) -> Result<Option<usiz
     }
 }
 
-fn card_from_row(row: CardRow) -> Result<Card, Error> {
+pub(crate) fn card_from_row(row: CardRow) -> Result<Card, Error> {
     let (id, deck_id, front, back, phase, learning_step, stability, difficulty, due, last_review) =
         row;
     let phase = phase_from_db(id, &phase)?;
@@ -706,12 +725,16 @@ fn card_from_row(row: CardRow) -> Result<Card, Error> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use domain::{Card, Rating, Store, UserId};
+    use domain::{Card, Rating, Store, UserId, admin_create_user, bootstrap_admin};
 
     const USER: UserId = 1;
     use sqlx::sqlite::SqliteConnectOptions;
 
-    async fn open_memory() -> SqlitePool {
+    fn noon() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap()
+    }
+
+    async fn open_memory_migrations_only() -> SqlitePool {
         let options = SqliteConnectOptions::new()
             .in_memory(true)
             .create_if_missing(true)
@@ -722,6 +745,11 @@ mod tests {
             .await
             .unwrap();
         MIGRATOR.run(&pool).await.unwrap();
+        pool
+    }
+
+    async fn open_memory() -> SqlitePool {
+        let pool = open_memory_migrations_only().await;
         ensure_default_deck(&pool).await.unwrap();
         pool
     }
@@ -1288,7 +1316,7 @@ mod tests {
     #[tokio::test]
     async fn store_use_cases_round_trip_and_delete_last_deck() {
         let store = SqliteStore::new(open_memory().await);
-        let seeded = domain::list_home(&store, USER, Utc::now()).await.unwrap();
+        let seeded = domain::list_home(&store, USER, noon()).await.unwrap();
         assert_eq!(seeded.len(), 1);
         assert_eq!(seeded[0].deck.name, DEFAULT_DECK_NAME);
 
@@ -1499,5 +1527,297 @@ mod tests {
             msg.contains("CHECK") || msg.contains("constraint"),
             "expected CHECK failure, got {msg}"
         );
+    }
+
+    async fn deck_user_id(pool: &SqlitePool, deck_id: i64) -> Option<i64> {
+        sqlx::query_scalar("SELECT user_id FROM decks WHERE id = ?")
+            .bind(deck_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn users_migration_leaves_existing_decks_orphaned() {
+        let path = temp_db_path();
+        remove_db(&path);
+
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        apply_migrations_through(&pool, 3).await;
+        ensure_default_deck(&pool).await.unwrap();
+        let extra_id = insert_deck(&pool, "Spanish").await;
+        pool.close().await;
+
+        let pool = open(&path).await.unwrap();
+        let default_id = list_decks(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|d| d.name == DEFAULT_DECK_NAME)
+            .unwrap()
+            .id;
+        assert_eq!(deck_user_id(&pool, default_id).await, None);
+        assert_eq!(deck_user_id(&pool, extra_id).await, None);
+
+        pool.close().await;
+        remove_db(&path);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_assigns_orphans_instead_of_second_default() {
+        let pool = open_memory().await;
+        let preexisting = insert_deck(&pool, "Preexisting").await;
+        let store = SqliteStore::new(pool.clone());
+
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        assert!(admin.admin);
+        assert_eq!(deck_user_id(&pool, preexisting).await, Some(admin.id));
+        let default_id = list_decks(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|d| d.name == DEFAULT_DECK_NAME)
+            .unwrap()
+            .id;
+        assert_eq!(deck_user_id(&pool, default_id).await, Some(admin.id));
+
+        let home = domain::list_home(&store, admin.id, noon()).await.unwrap();
+        assert_eq!(home.len(), 2);
+        assert!(home.iter().any(|d| d.deck.name == "Preexisting"));
+        assert!(home.iter().any(|d| d.deck.name == DEFAULT_DECK_NAME));
+        assert_eq!(
+            home.iter()
+                .filter(|d| d.deck.name == DEFAULT_DECK_NAME)
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_seeds_default_when_no_orphans() {
+        let pool = open_memory_migrations_only().await;
+        let store = SqliteStore::new(pool.clone());
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        let home = domain::list_home(&store, admin.id, noon()).await.unwrap();
+        assert_eq!(home.len(), 1);
+        assert_eq!(home[0].deck.name, DEFAULT_DECK_NAME);
+        assert_eq!(deck_user_id(&pool, home[0].deck.id).await, Some(admin.id));
+    }
+
+    #[tokio::test]
+    async fn create_user_seeds_default_per_user() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        let member = admin_create_user(&store, admin.id, "member", "pw")
+            .await
+            .unwrap();
+
+        let admin_home = domain::list_home(&store, admin.id, noon()).await.unwrap();
+        let member_home = domain::list_home(&store, member.id, noon()).await.unwrap();
+        assert_eq!(admin_home.len(), 1);
+        assert_eq!(admin_home[0].deck.name, DEFAULT_DECK_NAME);
+        assert_eq!(member_home.len(), 1);
+        assert_eq!(member_home[0].deck.name, DEFAULT_DECK_NAME);
+        assert_ne!(admin_home[0].deck.id, member_home[0].deck.id);
+    }
+
+    #[tokio::test]
+    async fn store_queries_are_isolated_per_user() {
+        let store = SqliteStore::new(open_memory().await);
+        let admin = store.create_user("admin", "hash", true).await.unwrap();
+        let member = store.create_user("member", "hash", false).await.unwrap();
+        let admin_deck = domain::create_deck(&store, admin.id, "AdminDeck")
+            .await
+            .unwrap();
+        let member_deck = domain::create_deck(&store, member.id, "MemberDeck")
+            .await
+            .unwrap();
+        let admin_card = domain::create_card(&store, admin.id, admin_deck.id, "Q", "A")
+            .await
+            .unwrap();
+        let member_card = domain::create_card(&store, member.id, member_deck.id, "Q2", "A2")
+            .await
+            .unwrap();
+
+        let admin_home = domain::list_home(&store, admin.id, noon()).await.unwrap();
+        assert_eq!(admin_home.len(), 1);
+        assert_eq!(admin_home[0].deck.name, "AdminDeck");
+        assert!(
+            domain::get_deck(&store, admin.id, member_deck.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            domain::get_card(&store, admin.id, member_card.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            domain::list_deck_cards(&store, admin.id, member_deck.id)
+                .await
+                .unwrap_err(),
+            domain::Error::DeckNotFound { deck_id } if deck_id == member_deck.id
+        ));
+        assert!(matches!(
+            domain::create_card(&store, admin.id, member_deck.id, "X", "Y")
+                .await
+                .unwrap_err(),
+            domain::Error::DeckNotFound { deck_id } if deck_id == member_deck.id
+        ));
+        assert!(
+            domain::get_deck(&store, member.id, admin_deck.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            domain::get_card(&store, member.id, admin_card.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let now = Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap();
+        let (updated, entry) = member_card.apply_rating(Rating::Good, now).unwrap();
+        assert!(matches!(
+            store
+                .commit_review(admin.id, &updated, &entry)
+                .await
+                .unwrap_err(),
+            domain::Error::CardNotFound { card_id } if card_id == member_card.id
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_user_cascades_decks_cards_review_logs_and_sessions() {
+        let pool = open_memory_migrations_only().await;
+        let store = SqliteStore::new(pool.clone());
+        let admin = store.create_user("admin", "hash", true).await.unwrap();
+        let member = store.create_user("member", "hash", false).await.unwrap();
+        let kept = domain::create_deck(&store, admin.id, "Keep").await.unwrap();
+        domain::create_card(&store, admin.id, kept.id, "Q", "A")
+            .await
+            .unwrap();
+        let doomed = domain::create_deck(&store, member.id, "Doomed")
+            .await
+            .unwrap();
+        let card = domain::create_card(&store, member.id, doomed.id, "Q", "A")
+            .await
+            .unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap();
+        domain::rate(&store, member.id, card.id, Rating::Good, now)
+            .await
+            .unwrap();
+        let session = store.create_session(member.id, now).await.unwrap();
+
+        store.delete_user(member.id).await.unwrap();
+
+        assert!(store.get_user(member.id).await.unwrap().is_none());
+        assert!(
+            domain::get_deck(&store, admin.id, doomed.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(count(&pool, "sessions").await, 0);
+        assert!(store.get_session(&session.id).await.unwrap().is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM cards WHERE deck_id = ?")
+                .bind(doomed.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(count(&pool, "review_logs").await, 0);
+        assert_eq!(
+            domain::list_home(&store, admin.id, now)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store.get_user(admin.id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn disable_keeps_user_row_and_does_not_delete_sessions() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let member = store.create_user("member", "hash", false).await.unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap();
+        let session = store.create_session(member.id, now).await.unwrap();
+
+        let disabled = store.set_disabled(member.id, true).await.unwrap();
+        assert!(disabled.disabled);
+        assert!(store.get_user(member.id).await.unwrap().unwrap().disabled);
+        assert!(store.get_session(&session.id).await.unwrap().is_some());
+
+        store.delete_sessions_for_user(member.id).await.unwrap();
+        assert!(store.get_session(&session.id).await.unwrap().is_none());
+        assert!(store.get_user(member.id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn username_is_unique_case_insensitive_and_stored_as_entered() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let created = store.create_user("Admin", "hash", true).await.unwrap();
+        assert_eq!(created.username, "Admin");
+        assert_eq!(
+            store
+                .get_user_by_username("admin")
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            created.id
+        );
+        assert!(matches!(
+            store.create_user("admin", "hash", false).await.unwrap_err(),
+            domain::Error::UsernameTaken
+        ));
+        assert_eq!(store.list_users().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn session_create_get_and_delete() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let user = store.create_user("admin", "hash", true).await.unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap();
+        let session = store.create_session(user.id, now).await.unwrap();
+        assert_eq!(session.user_id, user.id);
+        assert_eq!(session.created_at, now);
+        assert_eq!(session.last_used_at, now);
+        assert_eq!(session.id.len(), 32);
+
+        let fetched = store.get_session(&session.id).await.unwrap().unwrap();
+        assert_eq!(fetched, session);
+
+        store.delete_session(&session.id).await.unwrap();
+        assert!(store.get_session(&session.id).await.unwrap().is_none());
+        store.delete_session("missing").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_user_does_not_see_orphans_once_users_exist() {
+        let store = SqliteStore::new(open_memory().await);
+        store.create_user("admin", "hash", true).await.unwrap();
+        let home = domain::list_home(&store, 999, noon()).await.unwrap();
+        assert!(home.is_empty());
+        assert!(matches!(
+            domain::create_deck(&store, 999, "Nope").await.unwrap_err(),
+            domain::Error::UserNotFound { user_id: 999 }
+        ));
     }
 }
