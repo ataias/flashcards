@@ -32,12 +32,10 @@ fn from_db<T>(result: Result<T, crate::Error>) -> Result<T, DomainError> {
     result.map_err(DomainError::from)
 }
 
-/// User/Session ports land in #88 (ownership columns + tables). Until then
+/// User/Session ports are not implemented in SqliteStore yet. Until then
 /// Deck/Card methods ignore `user_id` so the workspace still builds.
 fn not_implemented(port: &'static str) -> DomainError {
-    DomainError::storage(format!(
-        "{port} is not implemented in SqliteStore yet; see GitHub issue #88"
-    ))
+    DomainError::storage(format!("{port} is not implemented in SqliteStore yet"))
 }
 
 impl Store for SqliteStore {

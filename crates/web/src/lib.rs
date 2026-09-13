@@ -14,8 +14,8 @@ use axum::routing::{get, post};
 use domain::Store;
 use tower_http::services::ServeDir;
 
-/// Placeholder owner until HTTP sessions land (#89).
-/// `SqliteStore` ignores it until the ownership migration (#88).
+/// Placeholder owner until HTTP sessions identify the current User.
+/// `SqliteStore` ignores it until decks persist an owner.
 pub(crate) const LEGACY_USER_ID: domain::UserId = 1;
 
 fn wants_fragment(headers: &HeaderMap) -> bool {

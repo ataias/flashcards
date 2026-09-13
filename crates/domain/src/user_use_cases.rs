@@ -34,10 +34,7 @@ pub async fn authenticate<S: Store>(
         .get_user_by_username(username)
         .await?
         .ok_or(Error::InvalidCredentials)?;
-    if user.disabled {
-        return Err(Error::UserDisabled);
-    }
-    if !verify_password(password, &user.password_hash)? {
+    if user.disabled || !verify_password(password, &user.password_hash)? {
         return Err(Error::InvalidCredentials);
     }
     let session = store.create_session(user.id, now).await?;
@@ -265,7 +262,7 @@ mod tests {
             authenticate(&store, "member", "pw", noon())
                 .await
                 .unwrap_err(),
-            Error::UserDisabled
+            Error::InvalidCredentials
         ));
         assert_eq!(store.sessions_for(member.id), 0);
     }
