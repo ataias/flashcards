@@ -1,11 +1,15 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
+  --space-page: 1rem;
 }
 
 body {
+  box-sizing: border-box;
   margin: 2rem auto;
   max-width: 40rem;
+  padding-inline: max(var(--space-page), env(safe-area-inset-left))
+    max(var(--space-page), env(safe-area-inset-right));
   line-height: 1.5;
 }
 
