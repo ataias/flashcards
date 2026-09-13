@@ -92,6 +92,21 @@ async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCo
 }
 
 #[tokio::test]
+async fn about_shows_commit_identity_and_release_link() {
+    let db = test_db().await;
+    let (status, html) = get(app(&db), "/about").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Flashcards</h1>"));
+    assert!(html.contains(env!("CARGO_PKG_VERSION")));
+    assert!(
+        html.contains("/ataias/flashcards/commit/") || html.contains("unknown"),
+        "expected commit link path or unknown, got {html}"
+    );
+    assert!(!html.contains("/commit/unknown"));
+    assert!(html.contains("https://github.com/ataias/flashcards/releases"));
+}
+
+#[tokio::test]
 async fn index_lists_default_deck_and_local_static() {
     let db = test_db().await;
     let (status, html) = get(app(&db), "/").await;

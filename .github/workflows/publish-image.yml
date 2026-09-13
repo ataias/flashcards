@@ -57,6 +57,10 @@ jobs:
 
       - name: Build release binary
         working-directory: /src
+        env:
+          # Baked into /about via option_env! (FLASHCARDS_GIT_SHA, else GITHUB_SHA).
+          FLASHCARDS_GIT_SHA: ${{ github.sha }}
+          GITHUB_SHA: ${{ github.sha }}
         run: cargo build --release --locked --bin flashcards
 
       - name: Upload release binary
