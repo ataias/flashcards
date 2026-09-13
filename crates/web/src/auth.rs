@@ -7,6 +7,7 @@ use chrono::Utc;
 use domain::Store;
 use serde::Deserialize;
 
+use crate::assets::Head;
 use crate::error::AppError;
 use crate::session::{
     AuthUser, CsrfToken, RateLimiter, clear_session_cookie, client_key, load_auth, rate_limited,
@@ -18,6 +19,7 @@ use crate::session::{
 struct LoginTemplate {
     csrf: String,
     error: Option<String>,
+    head: Head,
 }
 
 #[derive(Template)]
@@ -25,6 +27,7 @@ struct LoginTemplate {
 struct BootstrapTemplate {
     csrf: String,
     error: Option<String>,
+    head: Head,
 }
 
 #[derive(Template)]
@@ -33,6 +36,7 @@ struct SettingsTemplate {
     csrf: String,
     username: String,
     error: Option<String>,
+    head: Head,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +184,7 @@ fn render_login(csrf: &str, error: Option<&str>) -> Result<Response, AppError> {
         LoginTemplate {
             csrf: csrf.to_string(),
             error: error.map(str::to_string),
+            head: Head::new("Log in — Flashcards")?,
         }
         .render()?,
     )
@@ -191,6 +196,7 @@ fn render_bootstrap(csrf: &str, error: Option<&str>) -> Result<Response, AppErro
         BootstrapTemplate {
             csrf: csrf.to_string(),
             error: error.map(str::to_string),
+            head: Head::new("Create admin — Flashcards")?,
         }
         .render()?,
     )
@@ -203,6 +209,7 @@ fn render_settings(username: &str, csrf: &str, error: Option<&str>) -> Result<Re
             csrf: csrf.to_string(),
             username: username.to_string(),
             error: error.map(str::to_string),
+            head: Head::new("Settings — Flashcards")?,
         }
         .render()?,
     )

@@ -403,6 +403,7 @@ async fn full_pages_share_hashed_head_including_about() {
         "/".to_string(),
         format!("/decks/{deck_id}"),
         format!("/decks/{deck_id}/study"),
+        "/settings".to_string(),
         "/about".to_string(),
     ];
     for path in &paths {
