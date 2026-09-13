@@ -2229,6 +2229,7 @@ dependencies = [
  "chrono",
  "domain",
  "serde",
+ "sha2",
  "tokio",
  "tower-http",
 ]

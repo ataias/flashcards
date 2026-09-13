@@ -6,6 +6,7 @@ use chrono::Utc;
 use domain::Store;
 use serde::Deserialize;
 
+use crate::assets::Head;
 use crate::error::AppError;
 use crate::wants_fragment;
 
@@ -17,6 +18,7 @@ struct DeckPageTemplate {
     cards: Vec<CardRow>,
     error: Option<String>,
     draft: CardDraft,
+    head: Head,
 }
 
 #[derive(Template)]
@@ -233,10 +235,11 @@ async fn render_deck_page<S: Store>(
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
-            deck_name: deck.name,
+            deck_name: deck.name.clone(),
             cards: card_rows(cards),
             error: error.map(str::to_string),
             draft,
+            head: Head::new(format!("{} — Flashcards", deck.name))?,
         }
         .render()?,
     )

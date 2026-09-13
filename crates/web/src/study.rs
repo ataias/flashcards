@@ -6,6 +6,7 @@ use chrono::{Local, Utc};
 use domain::{Deck, Rating, Store};
 use serde::Deserialize;
 
+use crate::assets::Head;
 use crate::error::AppError;
 use crate::wants_fragment;
 
@@ -17,6 +18,7 @@ struct StudyPageTemplate {
     card: Option<StudyCard>,
     revealed: bool,
     error: Option<String>,
+    head: Head,
 }
 
 #[derive(Template)]
@@ -149,6 +151,7 @@ fn render_full(
             card,
             revealed,
             error: error.map(str::to_string),
+            head: Head::new(format!("Study — {}", deck.name))?,
         }
         .render()?,
     )

@@ -27,10 +27,38 @@ fn app(db: &TestDb) -> Router {
 }
 
 async fn request(app: Router, req: Request<Body>) -> (StatusCode, String) {
+    let (status, _, body) = request_parts(app, req).await;
+    (status, body)
+}
+
+async fn request_parts(
+    app: Router,
+    req: Request<Body>,
+) -> (StatusCode, axum::http::HeaderMap, String) {
     let response = app.oneshot(req).await.unwrap();
     let status = response.status();
+    let headers = response.headers().clone();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+fn cache_control(headers: &axum::http::HeaderMap) -> &str {
+    headers
+        .get("cache-control")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+}
+
+fn hashed_asset(html: &str, path: &str) -> bool {
+    let needle = format!("{path}?h=");
+    let Some(index) = html.find(&needle) else {
+        return false;
+    };
+    let hex = html[index + needle.len()..]
+        .chars()
+        .take(16)
+        .collect::<String>();
+    hex.len() == 16 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 async fn get(app: Router, path: &str) -> (StatusCode, String) {
@@ -155,6 +183,8 @@ async fn index_lists_default_deck_and_local_static() {
     assert!(!html.contains("No Decks yet"));
     assert!(html.contains("/static/htmx.min.js"));
     assert!(html.contains("/static/app.css"));
+    assert!(hashed_asset(&html, "/static/htmx.min.js"));
+    assert!(hashed_asset(&html, "/static/app.css"));
     assert!(!html.contains("cdn.jsdelivr"));
     assert!(!html.contains("unpkg.com"));
     assert!(!html.contains("cdnjs"));
@@ -180,6 +210,87 @@ async fn serves_local_css() {
     let (status, css) = get(app(&db), "/static/app.css").await;
     assert_eq!(status, StatusCode::OK);
     assert!(css.contains("body"));
+}
+
+#[tokio::test]
+async fn static_files_ignore_content_hash_query() {
+    let db = test_db().await;
+    let (status, css) = get(app(&db), "/static/app.css?h=deadbeefdeadbeef").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(css.contains("body"));
+    let (status, js) = get(app(&db), "/static/htmx.min.js?h=deadbeefdeadbeef").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(js.contains("htmx"));
+}
+
+#[tokio::test]
+async fn documents_are_no_store_and_static_is_immutable() {
+    let db = test_db().await;
+    let (status, headers, html) = request_parts(
+        app(&db),
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache_control(&headers), "no-store");
+    assert!(hashed_asset(&html, "/static/app.css"));
+    assert!(hashed_asset(&html, "/static/htmx.min.js"));
+
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/static/app.css")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        "public, max-age=31536000, immutable"
+    );
+
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/static/htmx.min.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache_control(&headers),
+        "public, max-age=31536000, immutable"
+    );
+}
+
+#[tokio::test]
+async fn full_pages_share_hashed_head_including_about() {
+    let db = test_db().await;
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+    let paths = [
+        "/".to_string(),
+        format!("/decks/{deck_id}"),
+        format!("/decks/{deck_id}/study"),
+        "/about".to_string(),
+    ];
+    for path in &paths {
+        let (status, headers, html) = request_parts(
+            app(&db),
+            Request::builder().uri(path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(cache_control(&headers), "no-store", "{path}");
+        assert!(hashed_asset(&html, "/static/app.css"), "{path}");
+        assert!(hashed_asset(&html, "/static/htmx.min.js"), "{path}");
+        assert!(html.contains("<meta charset=\"utf-8\">"), "{path}");
+        assert!(
+            html.contains("name=\"viewport\""),
+            "{path} must share viewport meta"
+        );
+    }
 }
 
 #[tokio::test]
@@ -240,6 +351,9 @@ async fn htmx_fragments_omit_timing_footer() {
     let (status, decks) = post_form(app(&db), "/decks", "name=Spanish", true).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!decks.contains("page-perf"));
+    assert!(!decks.contains("?h="));
+    assert!(!decks.contains("/static/app.css"));
+    assert!(!decks.contains("/static/htmx.min.js"));
 
     let (status, cards) = post_form(
         app(&db),

@@ -1,4 +1,5 @@
 mod about;
+mod assets;
 mod build_info;
 mod cards;
 mod config;
@@ -10,9 +11,11 @@ pub use config::{Config, ConfigError, DEFAULT_BIND, DEFAULT_DB_PATH};
 
 use axum::Router;
 use axum::http::HeaderMap;
+use axum::http::header::{CACHE_CONTROL, HeaderValue};
 use axum::routing::{get, post};
 use domain::Store;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Placeholder owner until HTTP sessions identify the current User.
 /// `SqliteStore` ignores it until decks persist an owner.
@@ -46,8 +49,20 @@ where
         .route("/cards/{id}/delete", post(cards::delete_card::<S>))
         .route("/cards/{id}/reveal", post(study::reveal::<S>))
         .route("/cards/{id}/rate", post(study::rate::<S>))
-        .nest_service("/static", ServeDir::new(static_dir()))
         .with_state(store)
+        .layer(SetResponseHeaderLayer::overriding(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .nest(
+            "/static",
+            Router::new()
+                .fallback_service(ServeDir::new(static_dir()))
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                )),
+        )
 }
 
 #[cfg(test)]
@@ -97,5 +112,18 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body, "Internal server error");
         assert!(!body.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn missing_static_asset_is_500_without_path() {
+        let (status, body) = body_of(AppError::StaticAsset(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "/secret/static/app.css",
+        )))
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, "Internal server error");
+        assert!(!body.contains("secret"));
+        assert!(!body.contains("app.css"));
     }
 }
