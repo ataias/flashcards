@@ -59,6 +59,8 @@ If SQL queries changed: regenerate `.sqlx/` and **commit** it (`SQLX_OFFLINE=tru
 
 If this PR changes the **minimal happy path** the e2e smoke covers (boot → core study; later bootstrap/login), **update `e2e/` in the same PR** and run the smoke locally or rely on the `e2e` CI job. Do not leave Playwright/Lightpanda smoke stale.
 
+**Stacked happy-path / CI harness:** Required `e2e` must stay **green** on every open PR Ataias is asked to review (including stack bottoms). If a stacked PR breaks empty-DB boot before a later PR restores the real happy path (e.g. Users db layer before login/bootstrap UI), keep e2e green with a **stack-only CI harness** (e.g. `seed_ci_admin` / domain bootstrap called only from the e2e runner). Document it as CI harness, not product behavior. The PR that restores the real path **must remove** that harness in the same PR and update `e2e/` to the browser happy path (bootstrap → login → …). **Forbidden:** product env-gated bootstrap (e.g. `FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD`) or shipping a CI seed as supported empty-DB start. When a harness exists on a lower stack PR, **pair-merge** (or merge bottom-up without leaving the harness on `main` alone) with the restoring PR.
+
 Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
@@ -99,7 +101,7 @@ Do **not** open a fresh PR to “fix” a rebase — update the existing issue b
 
 1. Request review from **Code Reviewer**. Do not merge your own PR.
 2. Merge requires **Code Reviewer approval** and **Ataias approval**.
-3. Code Reviewer must confirm: if the PR changes the minimal happy path, `e2e/` smoke still covers boot → that path (Playwright + Lightpanda). Reject stale smoke.
+3. Code Reviewer must confirm: if the PR changes the minimal happy path, `e2e/` smoke still covers boot → that path (Playwright + Lightpanda). Reject stale smoke. Required `e2e` must be **green** for review (including stack bottoms). If a stack-only CI seed harness is present, the child/restoring PR must delete it and own the real smoke; reject product env-gated bootstrap as a bridge.
 4. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
 5. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
 6. Before stacking a new PR, run §7 (rebase) so you are not building on a stale base.
