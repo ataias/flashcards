@@ -1,6 +1,6 @@
 # E2e harness (Playwright + Lightpanda)
 
-Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users study path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
+Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
 
 Pins (bump together when upgrading):
 
@@ -23,14 +23,12 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
 
-On this PR, an empty User table makes `flashcards` exit (`this process does not create an admin`) — same as production. There is no `seed_ci_admin` helper. Required `e2e` therefore fails here until this PR is pair-merged with the login/bootstrap PR, which keeps the process up and lets Playwright create the first user in the browser.
-
 ## Local run (binary + Lightpanda)
 
 From the repo root, three processes: the app, Lightpanda, then Playwright.
 
 ```bash
-# 1. App (empty DB exits on this PR — no seed; pair-merge with login PR to boot)
+# 1. App
 cargo build -p flashcards
 FLASHCARDS_DB="$(mktemp -d)/flashcards.db" FLASHCARDS_BIND=127.0.0.1:3000 \
   ./target/debug/flashcards
@@ -54,7 +52,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`. On this PR an empty DB exits (no seed); smoke is green only after pair-merge with the login PR.
+- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`.
 
 ## CI-equivalent local run
 
