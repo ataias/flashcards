@@ -1,27 +1,27 @@
 mod about;
 mod assets;
+mod auth;
 mod build_info;
 mod cards;
 mod config;
 mod decks;
 mod error;
+mod session;
 mod study;
 
 pub use config::{Config, ConfigError, DEFAULT_BIND, DEFAULT_DB_PATH};
 
+use axum::Extension;
 use axum::Router;
 use axum::http::HeaderMap;
 use axum::http::header::{CACHE_CONTROL, HeaderValue};
+use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
-use domain::{Store, UserId};
+use domain::Store;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
-#[derive(Clone)]
-pub(crate) struct AppState<S> {
-    store: S,
-    user_id: UserId,
-}
+use session::{CookieSecure, require_auth};
 
 fn wants_fragment(headers: &HeaderMap) -> bool {
     headers
@@ -34,13 +34,12 @@ fn static_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/static")
 }
 
-pub fn app<S>(store: S, user_id: UserId) -> Router
+pub fn app<S>(store: S, cookie_secure: bool) -> Router
 where
     S: Store + Clone + Send + Sync + 'static,
 {
-    Router::new()
+    let protected = Router::new()
         .route("/", get(decks::home::<S>))
-        .route("/about", get(about::about))
         .route("/decks", post(decks::create_deck::<S>))
         .route("/decks/{id}", get(cards::deck_page::<S>))
         .route("/decks/{id}/rename", post(decks::rename_deck::<S>))
@@ -51,7 +50,14 @@ where
         .route("/cards/{id}/delete", post(cards::delete_card::<S>))
         .route("/cards/{id}/reveal", post(study::reveal::<S>))
         .route("/cards/{id}/rate", post(study::rate::<S>))
-        .with_state(AppState { store, user_id })
+        .route_layer(from_fn_with_state(store.clone(), require_auth::<S>));
+
+    Router::new()
+        .route("/about", get(about::about))
+        .route("/login", post(auth::login::<S>))
+        .merge(protected)
+        .layer(Extension(CookieSecure(cookie_secure)))
+        .with_state(store)
         .layer(SetResponseHeaderLayer::overriding(
             CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

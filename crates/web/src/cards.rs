@@ -6,9 +6,9 @@ use chrono::Utc;
 use domain::Store;
 use serde::Deserialize;
 
-use crate::AppState;
 use crate::assets::Head;
 use crate::error::AppError;
+use crate::session::AuthUser;
 use crate::wants_fragment;
 
 #[derive(Template)]
@@ -95,18 +95,22 @@ pub struct CardForm {
 }
 
 pub async fn deck_page<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     render_deck_page(&store, user_id, deck_id, None, CardDraft::default()).await
 }
 
 pub async fn create_card<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     match domain::create_card(&store, user_id, deck_id, &form.front, &form.back).await {
         Ok(_) => {
             after_change(
@@ -146,11 +150,13 @@ pub async fn create_card<S: Store>(
 }
 
 pub async fn update_card<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     match domain::update_card(&store, user_id, card_id, &form.front, &form.back).await {
         Ok(card) => {
             after_change(
@@ -190,10 +196,12 @@ pub async fn update_card<S: Store>(
 }
 
 pub async fn delete_card<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     let deck_id = domain::delete_card(&store, user_id, card_id).await?;
     after_change(
         &store,

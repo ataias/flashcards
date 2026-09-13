@@ -6,9 +6,9 @@ use chrono::Local;
 use domain::Store;
 use serde::Deserialize;
 
-use crate::AppState;
 use crate::assets::Head;
 use crate::error::AppError;
+use crate::session::AuthUser;
 use crate::wants_fragment;
 
 #[derive(Template)]
@@ -38,17 +38,18 @@ pub struct DeckNameForm {
     name: String,
 }
 
-pub async fn home<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
-) -> Result<Response, AppError> {
+pub async fn home<S: Store>(State(store): State<S>, auth: AuthUser) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     render_home(&store, user_id, None).await
 }
 
 pub async fn create_deck<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     match domain::create_deck(&store, user_id, &form.name).await {
         Ok(_) => after_change(&store, user_id, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
@@ -65,11 +66,13 @@ pub async fn create_deck<S: Store>(
 }
 
 pub async fn rename_deck<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     match domain::rename_deck(&store, user_id, deck_id, &form.name).await {
         Ok(_) => after_change(&store, user_id, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
@@ -86,10 +89,12 @@ pub async fn rename_deck<S: Store>(
 }
 
 pub async fn delete_deck<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     domain::delete_deck(&store, user_id, deck_id).await?;
     after_change(&store, user_id, &headers, None).await
 }
