@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::{Error, UserId};
 
-/// Seeded when each User is created, unless bootstrap assigned pre-v1.3 orphans.
+/// Seeded when each User is created (bootstrap admin and every admin-created User).
 pub const DEFAULT_DECK_NAME: &str = "Default";
 
 pub const USERNAME_MIN_LEN: usize = 3;

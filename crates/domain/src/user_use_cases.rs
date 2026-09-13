@@ -16,10 +16,7 @@ pub async fn bootstrap_admin<S: Store>(
     let username = normalize_username(username)?;
     let password_hash = hash_password(password)?;
     let user = store.create_user(&username, &password_hash, true).await?;
-    let assigned = store.assign_orphan_decks(user.id).await?;
-    if assigned == 0 {
-        store.create_deck(user.id, DEFAULT_DECK_NAME).await?;
-    }
+    store.create_deck(user.id, DEFAULT_DECK_NAME).await?;
     Ok(user)
 }
 
@@ -200,16 +197,6 @@ mod tests {
                 .unwrap_err(),
             Error::BootstrapNotAllowed
         ));
-    }
-
-    #[tokio::test]
-    async fn bootstrap_assigns_orphans_instead_of_seeding_default() {
-        let store = MemStore::empty();
-        store.insert_orphan_deck("Preexisting");
-        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
-        let home = list_home(&store, admin.id, noon()).await.unwrap();
-        assert_eq!(home.len(), 1);
-        assert_eq!(home[0].deck.name, "Preexisting");
     }
 
     #[tokio::test]

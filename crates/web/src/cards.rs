@@ -6,6 +6,7 @@ use chrono::Utc;
 use domain::Store;
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::assets::Head;
 use crate::error::AppError;
 use crate::wants_fragment;
@@ -94,31 +95,34 @@ pub struct CardForm {
 }
 
 pub async fn deck_page<S: Store>(
-    State(store): State<S>,
+    State(AppState { store, user_id }): State<AppState<S>>,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    render_deck_page(&store, deck_id, None, CardDraft::default()).await
+    render_deck_page(&store, user_id, deck_id, None, CardDraft::default()).await
 }
 
 pub async fn create_card<S: Store>(
-    State(store): State<S>,
+    State(AppState { store, user_id }): State<AppState<S>>,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match domain::create_card(
-        &store,
-        crate::LEGACY_USER_ID,
-        deck_id,
-        &form.front,
-        &form.back,
-    )
-    .await
-    {
-        Ok(_) => after_change(&store, deck_id, &headers, None, CardDraft::default()).await,
+    match domain::create_card(&store, user_id, deck_id, &form.front, &form.back).await {
+        Ok(_) => {
+            after_change(
+                &store,
+                user_id,
+                deck_id,
+                &headers,
+                None,
+                CardDraft::default(),
+            )
+            .await
+        }
         Err(domain::Error::EmptyCardFront) => {
             after_change(
                 &store,
+                user_id,
                 deck_id,
                 &headers,
                 Some("Card front cannot be empty."),
@@ -129,6 +133,7 @@ pub async fn create_card<S: Store>(
         Err(domain::Error::EmptyCardBack) => {
             after_change(
                 &store,
+                user_id,
                 deck_id,
                 &headers,
                 Some("Card back cannot be empty."),
@@ -141,24 +146,27 @@ pub async fn create_card<S: Store>(
 }
 
 pub async fn update_card<S: Store>(
-    State(store): State<S>,
+    State(AppState { store, user_id }): State<AppState<S>>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    match domain::update_card(
-        &store,
-        crate::LEGACY_USER_ID,
-        card_id,
-        &form.front,
-        &form.back,
-    )
-    .await
-    {
-        Ok(card) => after_change(&store, card.deck_id, &headers, None, CardDraft::default()).await,
+    match domain::update_card(&store, user_id, card_id, &form.front, &form.back).await {
+        Ok(card) => {
+            after_change(
+                &store,
+                user_id,
+                card.deck_id,
+                &headers,
+                None,
+                CardDraft::default(),
+            )
+            .await
+        }
         Err(domain::Error::EmptyCardFront) => {
             card_error(
                 &store,
+                user_id,
                 card_id,
                 &headers,
                 "Card front cannot be empty.",
@@ -169,6 +177,7 @@ pub async fn update_card<S: Store>(
         Err(domain::Error::EmptyCardBack) => {
             card_error(
                 &store,
+                user_id,
                 card_id,
                 &headers,
                 "Card back cannot be empty.",
@@ -181,26 +190,36 @@ pub async fn update_card<S: Store>(
 }
 
 pub async fn delete_card<S: Store>(
-    State(store): State<S>,
+    State(AppState { store, user_id }): State<AppState<S>>,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let deck_id = domain::delete_card(&store, crate::LEGACY_USER_ID, card_id).await?;
-    after_change(&store, deck_id, &headers, None, CardDraft::default()).await
+    let deck_id = domain::delete_card(&store, user_id, card_id).await?;
+    after_change(
+        &store,
+        user_id,
+        deck_id,
+        &headers,
+        None,
+        CardDraft::default(),
+    )
+    .await
 }
 
 async fn card_error<S: Store>(
     store: &S,
+    user_id: domain::UserId,
     card_id: i64,
     headers: &HeaderMap,
     error: &str,
     form: &CardForm,
 ) -> Result<Response, AppError> {
-    let card = domain::get_card(store, crate::LEGACY_USER_ID, card_id)
+    let card = domain::get_card(store, user_id, card_id)
         .await?
         .ok_or(domain::Error::CardNotFound { card_id })?;
     after_change(
         store,
+        user_id,
         card.deck_id,
         headers,
         Some(error),
@@ -211,15 +230,16 @@ async fn card_error<S: Store>(
 
 async fn after_change<S: Store>(
     store: &S,
+    user_id: domain::UserId,
     deck_id: i64,
     headers: &HeaderMap,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_cards(store, deck_id, error, draft).await
+        render_cards(store, user_id, deck_id, error, draft).await
     } else if error.is_some() {
-        render_deck_page(store, deck_id, error, draft).await
+        render_deck_page(store, user_id, deck_id, error, draft).await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}")).into_response())
     }
@@ -227,11 +247,12 @@ async fn after_change<S: Store>(
 
 async fn render_deck_page<S: Store>(
     store: &S,
+    user_id: domain::UserId,
     deck_id: i64,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (deck, cards) = domain::list_deck_cards(store, crate::LEGACY_USER_ID, deck_id).await?;
+    let (deck, cards) = domain::list_deck_cards(store, user_id, deck_id).await?;
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
@@ -248,11 +269,12 @@ async fn render_deck_page<S: Store>(
 
 async fn render_cards<S: Store>(
     store: &S,
+    user_id: domain::UserId,
     deck_id: i64,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (_, cards) = domain::list_deck_cards(store, crate::LEGACY_USER_ID, deck_id).await?;
+    let (_, cards) = domain::list_deck_cards(store, user_id, deck_id).await?;
     Ok(Html(
         CardsTemplate {
             deck_id,

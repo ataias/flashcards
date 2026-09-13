@@ -150,10 +150,4 @@ pub trait Store: Send + Sync {
         &self,
         user_id: UserId,
     ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    /// Attach Decks with no owner to `user_id` (pre-v1.3 rows). Returns how many.
-    fn assign_orphan_decks(
-        &self,
-        user_id: UserId,
-    ) -> impl Future<Output = Result<usize, Error>> + Send;
 }

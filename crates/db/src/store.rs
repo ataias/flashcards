@@ -5,7 +5,8 @@ use domain::{
     ReviewLogEntry, Session, Store, StudyInputs, User, UserId,
 };
 
-use crate::{SqlitePool, commit_review, open};
+use crate::users;
+use crate::{SqlitePool, commit_review, first_review_times, list_cards_in_deck, open};
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -32,84 +33,78 @@ fn from_db<T>(result: Result<T, crate::Error>) -> Result<T, DomainError> {
     result.map_err(DomainError::from)
 }
 
-/// User/Session ports are not implemented in SqliteStore yet. Until then
-/// Deck/Card methods ignore `user_id` so the workspace still builds.
-fn not_implemented(port: &'static str) -> DomainError {
-    DomainError::storage(format!("{port} is not implemented in SqliteStore yet"))
-}
-
 impl Store for SqliteStore {
     async fn get_deck(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Option<Deck>, DomainError> {
-        from_db(crate::get_deck(&self.pool, deck_id).await)
+        from_db(users::get_owned_deck(&self.pool, user_id, deck_id).await)
     }
 
-    async fn create_deck(&self, _user_id: UserId, name: &str) -> Result<Deck, DomainError> {
-        from_db(crate::create_deck(&self.pool, name).await)
+    async fn create_deck(&self, user_id: UserId, name: &str) -> Result<Deck, DomainError> {
+        from_db(users::create_owned_deck(&self.pool, user_id, name).await)
     }
 
     async fn rename_deck(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         deck_id: DeckId,
         name: &str,
     ) -> Result<Deck, DomainError> {
-        from_db(crate::rename_deck(&self.pool, deck_id, name).await)
+        from_db(users::rename_owned_deck(&self.pool, user_id, deck_id, name).await)
     }
 
-    async fn delete_deck(&self, _user_id: UserId, deck_id: DeckId) -> Result<(), DomainError> {
-        from_db(crate::delete_deck(&self.pool, deck_id).await)
+    async fn delete_deck(&self, user_id: UserId, deck_id: DeckId) -> Result<(), DomainError> {
+        from_db(users::delete_owned_deck(&self.pool, user_id, deck_id).await)
     }
 
     async fn get_card(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         card_id: CardId,
     ) -> Result<Option<Card>, DomainError> {
-        from_db(crate::get_card(&self.pool, card_id).await)
+        from_db(users::get_owned_card(&self.pool, user_id, card_id).await)
     }
 
     async fn list_card_text_in_deck(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Vec<CardText>, DomainError> {
-        from_db(crate::list_card_text_in_deck(&self.pool, deck_id).await)
+        from_db(users::list_owned_card_text(&self.pool, user_id, deck_id).await)
     }
 
     async fn create_card(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         deck_id: DeckId,
         front: &str,
         back: &str,
     ) -> Result<Card, DomainError> {
-        from_db(crate::create_card(&self.pool, deck_id, front, back).await)
+        from_db(users::create_owned_card(&self.pool, user_id, deck_id, front, back).await)
     }
 
     async fn update_card(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         card_id: CardId,
         front: &str,
         back: &str,
     ) -> Result<Card, DomainError> {
-        from_db(crate::update_card(&self.pool, card_id, front, back).await)
+        from_db(users::update_owned_card(&self.pool, user_id, card_id, front, back).await)
     }
 
-    async fn delete_card(&self, _user_id: UserId, card_id: CardId) -> Result<DeckId, DomainError> {
-        from_db(crate::delete_card(&self.pool, card_id).await)
+    async fn delete_card(&self, user_id: UserId, card_id: CardId) -> Result<DeckId, DomainError> {
+        from_db(users::delete_owned_card(&self.pool, user_id, card_id).await)
     }
 
-    async fn load_home_inputs(&self, _user_id: UserId) -> Result<HomeInputs, DomainError> {
-        let decks = from_db(crate::list_decks(&self.pool).await)?;
+    async fn load_home_inputs(&self, user_id: UserId) -> Result<HomeInputs, DomainError> {
+        let decks = from_db(users::list_owned_decks(&self.pool, user_id).await)?;
         let mut home_decks = Vec::with_capacity(decks.len());
         for deck in decks {
-            let cards = from_db(crate::list_cards_in_deck(&self.pool, deck.id).await)?;
-            let first_reviewed_at = from_db(crate::first_review_times(&self.pool, deck.id).await)?;
+            let cards = from_db(list_cards_in_deck(&self.pool, deck.id).await)?;
+            let first_reviewed_at = from_db(first_review_times(&self.pool, deck.id).await)?;
             home_decks.push(HomeDeckInput {
                 deck,
                 cards,
@@ -121,14 +116,14 @@ impl Store for SqliteStore {
 
     async fn load_study_inputs(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Option<StudyInputs>, DomainError> {
-        let Some(deck) = from_db(crate::get_deck(&self.pool, deck_id).await)? else {
+        let Some(deck) = from_db(users::get_owned_deck(&self.pool, user_id, deck_id).await)? else {
             return Ok(None);
         };
-        let cards = from_db(crate::list_cards_in_deck(&self.pool, deck_id).await)?;
-        let first_reviewed_at = from_db(crate::first_review_times(&self.pool, deck_id).await)?;
+        let cards = from_db(list_cards_in_deck(&self.pool, deck_id).await)?;
+        let first_reviewed_at = from_db(first_review_times(&self.pool, deck_id).await)?;
         Ok(Some(StudyInputs {
             deck,
             cards,
@@ -138,71 +133,71 @@ impl Store for SqliteStore {
 
     async fn commit_review(
         &self,
-        _user_id: UserId,
+        user_id: UserId,
         card: &Card,
         entry: &ReviewLogEntry,
     ) -> Result<(Card, ReviewLogEntry), DomainError> {
+        from_db(users::require_user(&self.pool, user_id).await)?;
+        if from_db(users::get_owned_card(&self.pool, user_id, card.id).await)?.is_none() {
+            return Err(DomainError::CardNotFound { card_id: card.id });
+        }
         from_db(commit_review(&self.pool, card, entry).await)
     }
 
-    async fn get_user(&self, _user_id: UserId) -> Result<Option<User>, DomainError> {
-        Err(not_implemented("get_user"))
+    async fn get_user(&self, user_id: UserId) -> Result<Option<User>, DomainError> {
+        from_db(users::get_user(&self.pool, user_id).await)
     }
 
-    async fn get_user_by_username(&self, _username: &str) -> Result<Option<User>, DomainError> {
-        Err(not_implemented("get_user_by_username"))
+    async fn get_user_by_username(&self, username: &str) -> Result<Option<User>, DomainError> {
+        from_db(users::get_user_by_username(&self.pool, username).await)
     }
 
     async fn list_users(&self) -> Result<Vec<User>, DomainError> {
-        Err(not_implemented("list_users"))
+        from_db(users::list_users(&self.pool).await)
     }
 
     async fn create_user(
         &self,
-        _username: &str,
-        _password_hash: &str,
-        _admin: bool,
+        username: &str,
+        password_hash: &str,
+        admin: bool,
     ) -> Result<User, DomainError> {
-        Err(not_implemented("create_user"))
+        from_db(users::create_user(&self.pool, username, password_hash, admin).await)
     }
 
     async fn set_password_hash(
         &self,
-        _user_id: UserId,
-        _password_hash: &str,
+        user_id: UserId,
+        password_hash: &str,
     ) -> Result<User, DomainError> {
-        Err(not_implemented("set_password_hash"))
+        from_db(users::set_password_hash(&self.pool, user_id, password_hash).await)
     }
 
-    async fn set_disabled(&self, _user_id: UserId, _disabled: bool) -> Result<User, DomainError> {
-        Err(not_implemented("set_disabled"))
+    async fn set_disabled(&self, user_id: UserId, disabled: bool) -> Result<User, DomainError> {
+        from_db(users::set_disabled(&self.pool, user_id, disabled).await)
     }
 
-    async fn delete_user(&self, _user_id: UserId) -> Result<(), DomainError> {
-        Err(not_implemented("delete_user"))
+    async fn delete_user(&self, user_id: UserId) -> Result<(), DomainError> {
+        from_db(users::delete_user(&self.pool, user_id).await)
     }
 
     async fn create_session(
         &self,
-        _user_id: UserId,
-        _now: chrono::DateTime<chrono::Utc>,
+        user_id: UserId,
+        now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Session, DomainError> {
-        Err(not_implemented("create_session"))
+        from_db(users::create_session(&self.pool, user_id, now).await)
     }
 
-    async fn get_session(&self, _session_id: &str) -> Result<Option<Session>, DomainError> {
-        Err(not_implemented("get_session"))
+    async fn get_session(&self, session_id: &str) -> Result<Option<Session>, DomainError> {
+        from_db(users::get_session(&self.pool, session_id).await)
     }
 
-    async fn delete_session(&self, _session_id: &str) -> Result<(), DomainError> {
-        Err(not_implemented("delete_session"))
+    async fn delete_session(&self, session_id: &str) -> Result<(), DomainError> {
+        from_db(users::delete_session(&self.pool, session_id).await)
     }
 
-    async fn delete_sessions_for_user(&self, _user_id: UserId) -> Result<(), DomainError> {
-        Err(not_implemented("delete_sessions_for_user"))
-    }
-
-    async fn assign_orphan_decks(&self, _user_id: UserId) -> Result<usize, DomainError> {
-        Err(not_implemented("assign_orphan_decks"))
+    async fn delete_sessions_for_user(&self, user_id: UserId) -> Result<(), DomainError> {
+        from_db(users::delete_sessions_for_user(&self.pool, user_id).await)
     }
 }

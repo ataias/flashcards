@@ -509,6 +509,7 @@ dependencies = [
  "axum",
  "chrono",
  "db",
+ "domain",
  "sqlx",
  "tempfile",
  "tokio",

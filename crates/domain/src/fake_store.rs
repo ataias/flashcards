@@ -15,7 +15,7 @@ pub(crate) struct Inner {
     users: BTreeMap<UserId, User>,
     sessions: BTreeMap<SessionId, Session>,
     pub(crate) decks: BTreeMap<DeckId, Deck>,
-    deck_owners: BTreeMap<DeckId, Option<UserId>>,
+    deck_owners: BTreeMap<DeckId, UserId>,
     pub(crate) cards: BTreeMap<CardId, Card>,
     pub(crate) reviews: Vec<ReviewLogEntry>,
 }
@@ -44,19 +44,6 @@ impl MemStore {
 
     pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().expect("mem store lock")
-    }
-
-    pub(crate) fn insert_orphan_deck(&self, name: &str) -> Deck {
-        let mut inner = self.lock();
-        let id = inner.next_deck_id;
-        inner.next_deck_id += 1;
-        let deck = Deck {
-            id,
-            name: name.to_string(),
-        };
-        inner.decks.insert(id, deck.clone());
-        inner.deck_owners.insert(id, None);
-        deck
     }
 
     pub(crate) fn insert_user(&self, username: &str, admin: bool) -> User {
@@ -101,7 +88,7 @@ impl MemStore {
     }
 
     fn owns_deck(inner: &Inner, user_id: UserId, deck_id: DeckId) -> bool {
-        inner.deck_owners.get(&deck_id) == Some(&Some(user_id))
+        inner.deck_owners.get(&deck_id) == Some(&user_id)
     }
 
     fn card_for_user<'a>(inner: &'a Inner, user_id: UserId, card_id: CardId) -> Option<&'a Card> {
@@ -132,7 +119,7 @@ impl Store for MemStore {
             name: name.to_string(),
         };
         inner.decks.insert(id, deck.clone());
-        inner.deck_owners.insert(id, Some(user_id));
+        inner.deck_owners.insert(id, user_id);
         Ok(deck)
     }
 
@@ -396,7 +383,7 @@ impl Store for MemStore {
         let deck_ids: Vec<DeckId> = inner
             .deck_owners
             .iter()
-            .filter_map(|(deck_id, owner)| (*owner == Some(user_id)).then_some(*deck_id))
+            .filter_map(|(deck_id, owner)| (*owner == user_id).then_some(*deck_id))
             .collect();
         for deck_id in deck_ids {
             inner.decks.remove(&deck_id);
@@ -441,20 +428,5 @@ impl Store for MemStore {
             .sessions
             .retain(|_, session| session.user_id != user_id);
         Ok(())
-    }
-
-    async fn assign_orphan_decks(&self, user_id: UserId) -> Result<usize, Error> {
-        let mut inner = self.lock();
-        if !inner.users.contains_key(&user_id) {
-            return Err(Error::UserNotFound { user_id });
-        }
-        let mut assigned = 0;
-        for owner in inner.deck_owners.values_mut() {
-            if owner.is_none() {
-                *owner = Some(user_id);
-                assigned += 1;
-            }
-        }
-        Ok(assigned)
     }
 }

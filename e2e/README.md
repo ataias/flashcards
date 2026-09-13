@@ -23,6 +23,8 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
 
+`run-ci.sh` runs `seed_ci_admin` on the temp DB first (stack-only CI harness; removed when login UI lands). Production empty-DB start still exits.
+
 ## Local run (binary + Lightpanda)
 
 From the repo root, three processes: the app, Lightpanda, then Playwright.
