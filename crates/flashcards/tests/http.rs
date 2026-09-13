@@ -1490,11 +1490,10 @@ async fn empty_db_shows_bootstrap_and_keeps_about_public() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/bootstrap");
 
-    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
     let (status, headers, _) = request(
         app(&db),
         Request::builder()
-            .uri(format!("/decks/{deck_id}/study"))
+            .uri("/decks/1/study")
             .body(Body::empty())
             .unwrap(),
     )
