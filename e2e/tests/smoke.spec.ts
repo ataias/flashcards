@@ -6,10 +6,9 @@ const FRONT = "e2e smoke front";
 const BACK = "e2e smoke back";
 
 /**
- * Pre-login happy path: home → Default deck → create Card →
- * Study reveal + rate → /about. CI starts the binary with
- * FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD so an empty DB gets an admin
- * (no default password in the binary).
+ * Pre-Users happy path: home → Default deck → create Card →
+ * Study reveal + rate → /about. CI seeds one admin via
+ * `seed_ci_admin` before starting the binary (#96 bridge).
  */
 test("home, Default deck, create card, study, about", async ({ page }) => {
   const serverErrors = trackServerErrors(page);

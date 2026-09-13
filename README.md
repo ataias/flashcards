@@ -38,8 +38,6 @@ First start creates `./data/flashcards.db`. With v1.3, an empty User table shows
 | --- | --- | --- |
 | `FLASHCARDS_DB` | `./data/flashcards.db` | SQLite path (`data/` is created if missing) |
 | `FLASHCARDS_BIND` | `127.0.0.1:3000` | Listen address (e.g. `0.0.0.0:3000`) |
-| `FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD` | unset | If the DB has no Users, required to create the first admin (no default in the binary). Omit to refuse start. |
-| `FLASHCARDS_BOOTSTRAP_ADMIN_USERNAME` | `admin` | Username used only when the password env is set. |
 
 `GET /about` shows the Cargo package version, git commit, and **uncompressed** image size (the packed filesystem for that arch — not the compressed GHCR download size). `/about` stays reachable without login.
 

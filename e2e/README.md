@@ -1,6 +1,6 @@
 # E2e harness (Playwright + Lightpanda)
 
-Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-login study path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
+Minimal Playwright TypeScript harness. Tests attach to a **already running** Lightpanda CDP server with `chromium.connectOverCDP`. This tree is the smoke home (pre-Users study path in `tests/smoke.spec.ts`). CI runs the same path in the `e2e` job in `.github/workflows/ci.yml` (real binary, temp DB, pinned Lightpanda). That job is a required check; Ataias must add `e2e` to branch protection when it exists on `main`.
 
 Pins (bump together when upgrading):
 
@@ -20,19 +20,22 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 | `LIGHTPANDA_VERSION` | `0.4.0` | Override for `scripts/install-lightpanda.sh` |
 | `LIGHTPANDA_DIR` | `e2e/.lightpanda` | Install directory for the binary |
 | `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required if you override the version; the install script exits 1 without it |
-| `FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD` | (required on empty DB) | Passed through to the binary; `run-ci.sh` defaults to `e2e-bootstrap` |
+| `FLASHCARDS_SEED_BIN` | `target/debug/seed_ci_admin` | CI helper that seeds one admin + Default into the temp DB |
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
+
+`run-ci.sh` runs `seed_ci_admin` on the temp DB **before** starting the binary (`e2e` / `e2e-secret`). This is a **#96 bridge** so the required pre-Users smoke can boot while `main` stays fail-closed on an empty User table. **#98 must drop this pre-start seed** when restacked — that PR already has bootstrap → login smoke.
 
 ## Local run (binary + Lightpanda)
 
 From the repo root, three processes: the app, Lightpanda, then Playwright.
 
 ```bash
-# 1. App
+# 1. App (empty DB: seed first — the binary does not create an admin)
 cargo build -p flashcards
-FLASHCARDS_DB="$(mktemp -d)/flashcards.db" FLASHCARDS_BIND=127.0.0.1:3000 \
-  FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD=e2e-bootstrap \
+DB="$(mktemp -d)/flashcards.db"
+./target/debug/seed_ci_admin "$DB"
+FLASHCARDS_DB="$DB" FLASHCARDS_BIND=127.0.0.1:3000 \
   ./target/debug/flashcards
 ```
 
@@ -54,7 +57,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — pre-login happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL` (empty DB requires `FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD`).
+- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL` (empty DB: run `seed_ci_admin` first).
 
 ## CI-equivalent local run
 
