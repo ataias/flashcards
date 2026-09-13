@@ -195,20 +195,6 @@ pub(crate) async fn delete_sessions_for_user(
     Ok(())
 }
 
-pub(crate) async fn assign_orphan_decks(
-    pool: &SqlitePool,
-    user_id: UserId,
-) -> Result<usize, Error> {
-    if get_user(pool, user_id).await?.is_none() {
-        return Err(Error::UserNotFound { user_id });
-    }
-    let result = sqlx::query("UPDATE decks SET user_id = ? WHERE user_id IS NULL")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(result.rows_affected() as usize)
-}
-
 fn session_from_row(
     (id, user_id, created_at, last_used_at): (String, i64, String, String),
 ) -> Result<Session, Error> {

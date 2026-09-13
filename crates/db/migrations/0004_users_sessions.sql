@@ -8,11 +8,10 @@
 --     → that User's Sessions (sessions.user_id ON DELETE CASCADE)
 -- Disable only flips users.disabled; Session rows are deleted by Store.
 --
--- Existing Decks keep user_id NULL (orphans). Bootstrap assigns them to
--- the first admin instead of seeding a second Default.
---
--- Add the column in place. Rebuilding `decks` would CASCADE-delete Cards
--- (ON DELETE actions run immediately, even with deferred FK checks).
+-- Pre-v1.3 Decks/Cards/review_logs have no owner. Wipe them here so
+-- bootstrap always seeds a fresh Default instead of inheriting leftovers.
+-- Rebuild `decks` with user_id NOT NULL: the table is empty after DELETE,
+-- and deferred FKs let us replace it while `cards` still references it.
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +34,21 @@ CREATE TABLE sessions (
 
 CREATE INDEX sessions_user_id ON sessions (user_id);
 
-ALTER TABLE decks ADD COLUMN user_id INTEGER REFERENCES users (id) ON DELETE CASCADE;
+DELETE FROM decks;
+
+PRAGMA defer_foreign_keys = ON;
+
+CREATE TABLE decks_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE
+);
+
+DROP TABLE decks;
+ALTER TABLE decks_new RENAME TO decks;
 
 CREATE INDEX decks_user_id ON decks (user_id);
+
+PRAGMA foreign_key_check;
+PRAGMA defer_foreign_keys = OFF;

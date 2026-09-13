@@ -200,8 +200,4 @@ impl Store for SqliteStore {
     async fn delete_sessions_for_user(&self, user_id: UserId) -> Result<(), DomainError> {
         from_db(users::delete_sessions_for_user(&self.pool, user_id).await)
     }
-
-    async fn assign_orphan_decks(&self, user_id: UserId) -> Result<usize, DomainError> {
-        from_db(users::assign_orphan_decks(&self.pool, user_id).await)
-    }
 }

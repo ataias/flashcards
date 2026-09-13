@@ -203,12 +203,61 @@ async fn seed_default_if_empty(
         .fetch_one(&mut **conn)
         .await?;
     if n == 0 {
-        sqlx::query("INSERT INTO decks (name) VALUES (?)")
-            .bind(DEFAULT_DECK_NAME)
-            .execute(&mut **conn)
-            .await?;
+        let has_user_id: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('decks') WHERE name = 'user_id'",
+        )
+        .fetch_one(&mut **conn)
+        .await?;
+        if has_user_id > 0 {
+            let user_id = first_or_insert_user_on(conn).await?;
+            sqlx::query("INSERT INTO decks (name, user_id) VALUES (?, ?)")
+                .bind(DEFAULT_DECK_NAME)
+                .bind(user_id)
+                .execute(&mut **conn)
+                .await?;
+        } else {
+            sqlx::query("INSERT INTO decks (name) VALUES (?)")
+                .bind(DEFAULT_DECK_NAME)
+                .execute(&mut **conn)
+                .await?;
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+async fn first_or_insert_user_on(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+) -> Result<i64, Error> {
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM users ORDER BY id LIMIT 1")
+        .fetch_optional(&mut **conn)
+        .await?
+    {
+        return Ok(id);
+    }
+    sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, admin, disabled)
+         VALUES ('tester', 'test-hash', 1, 0) RETURNING id",
+    )
+    .fetch_one(&mut **conn)
+    .await
+    .map_err(Into::into)
+}
+
+async fn first_or_insert_user(pool: &SqlitePool) -> Result<i64, Error> {
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM users ORDER BY id LIMIT 1")
+        .fetch_optional(pool)
+        .await?
+    {
+        return Ok(id);
+    }
+    sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, admin, disabled)
+         VALUES ('tester', 'test-hash', 1, 0) RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -247,10 +296,13 @@ pub async fn get_deck(pool: &SqlitePool, deck_id: i64) -> Result<Option<Deck>, E
 }
 
 /// Create a Deck. Leading/trailing whitespace is trimmed; empty names are rejected.
+/// Unscoped callers (tests) attach the Deck to an existing User, or insert one.
 pub async fn create_deck(pool: &SqlitePool, name: &str) -> Result<Deck, Error> {
     let name = normalize_deck_name(name)?;
-    let id = sqlx::query_scalar("INSERT INTO decks (name) VALUES (?) RETURNING id")
+    let user_id = first_or_insert_user(pool).await?;
+    let id = sqlx::query_scalar("INSERT INTO decks (name, user_id) VALUES (?, ?) RETURNING id")
         .bind(&name)
+        .bind(user_id)
         .fetch_one(pool)
         .await?;
     Ok(Deck { id, name })
@@ -773,11 +825,27 @@ mod tests {
     }
 
     async fn insert_deck(pool: &SqlitePool, name: &str) -> i64 {
-        sqlx::query_scalar("INSERT INTO decks (name) VALUES (?) RETURNING id")
-            .bind(name)
-            .fetch_one(pool)
-            .await
-            .unwrap()
+        let has_user_id: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('decks') WHERE name = 'user_id'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if has_user_id > 0 {
+            let user_id = first_or_insert_user(pool).await.unwrap();
+            sqlx::query_scalar("INSERT INTO decks (name, user_id) VALUES (?, ?) RETURNING id")
+                .bind(name)
+                .bind(user_id)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        } else {
+            sqlx::query_scalar("INSERT INTO decks (name) VALUES (?) RETURNING id")
+                .bind(name)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        }
     }
 
     async fn insert_card(pool: &SqlitePool, deck_id: i64) -> i64 {
@@ -1363,6 +1431,17 @@ mod tests {
         }
     }
 
+    async fn apply_migration(pool: &SqlitePool, version: i64) {
+        use sqlx::migrate::Migrate;
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        let migration = MIGRATOR
+            .iter()
+            .find(|m| m.version == version)
+            .unwrap_or_else(|| panic!("missing migration {version}"));
+        conn.apply(migration).await.unwrap();
+    }
+
     #[tokio::test]
     async fn get_card_after_rate_keeps_learning_phase_and_step() {
         let pool = open_memory().await;
@@ -1462,9 +1541,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        pool.close().await;
-
-        let pool = open(&path).await.unwrap();
+        apply_migration(&pool, 3).await;
         let decks = list_decks(&pool).await.unwrap();
         assert_eq!(decks.len(), 1);
         assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
@@ -1521,7 +1598,7 @@ mod tests {
         );
     }
 
-    async fn deck_user_id(pool: &SqlitePool, deck_id: i64) -> Option<i64> {
+    async fn deck_user_id(pool: &SqlitePool, deck_id: i64) -> i64 {
         sqlx::query_scalar("SELECT user_id FROM decks WHERE id = ?")
             .bind(deck_id)
             .fetch_one(pool)
@@ -1529,8 +1606,18 @@ mod tests {
             .unwrap()
     }
 
+    async fn decks_user_id_is_not_null(pool: &SqlitePool) -> bool {
+        let notnull: i64 = sqlx::query_scalar(
+            "SELECT \"notnull\" FROM pragma_table_info('decks') WHERE name = 'user_id'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        notnull == 1
+    }
+
     #[tokio::test]
-    async fn users_migration_leaves_existing_decks_orphaned() {
+    async fn users_migration_wipes_preexisting_decks_cards_and_logs() {
         let path = temp_db_path();
         remove_db(&path);
 
@@ -1546,55 +1633,67 @@ mod tests {
         apply_migrations_through(&pool, 3).await;
         ensure_default_deck(&pool).await.unwrap();
         let extra_id = insert_deck(&pool, "Spanish").await;
+        let card_id = insert_card(&pool, extra_id).await;
+        insert_review_log(&pool, card_id).await;
+        assert_eq!(count(&pool, "decks").await, 2);
+        assert_eq!(count(&pool, "cards").await, 1);
+        assert_eq!(count(&pool, "review_logs").await, 1);
         pool.close().await;
 
         let pool = open(&path).await.unwrap();
-        let default_id = list_decks(&pool)
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+        assert_eq!(count(&pool, "cards").await, 0);
+        assert_eq!(count(&pool, "review_logs").await, 0);
+        assert!(decks_user_id_is_not_null(&pool).await);
+        let unowned = sqlx::query("INSERT INTO decks (name) VALUES ('Nope')")
+            .execute(&pool)
             .await
-            .unwrap()
-            .into_iter()
-            .find(|d| d.name == DEFAULT_DECK_NAME)
-            .unwrap()
-            .id;
-        assert_eq!(deck_user_id(&pool, default_id).await, None);
-        assert_eq!(deck_user_id(&pool, extra_id).await, None);
+            .unwrap_err()
+            .to_string();
+        assert!(
+            unowned.contains("NOT NULL") || unowned.contains("constraint"),
+            "expected NOT NULL failure, got {unowned}"
+        );
 
         pool.close().await;
         remove_db(&path);
     }
 
     #[tokio::test]
-    async fn bootstrap_assigns_orphans_instead_of_second_default() {
-        let pool = open_memory().await;
-        let preexisting = insert_deck(&pool, "Preexisting").await;
-        let store = SqliteStore::new(pool.clone());
+    async fn bootstrap_seeds_fresh_default_after_preexisting_wipe() {
+        let path = temp_db_path();
+        remove_db(&path);
 
-        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
-        assert!(admin.admin);
-        assert_eq!(deck_user_id(&pool, preexisting).await, Some(admin.id));
-        let default_id = list_decks(&pool)
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
             .await
-            .unwrap()
-            .into_iter()
-            .find(|d| d.name == DEFAULT_DECK_NAME)
-            .unwrap()
-            .id;
-        assert_eq!(deck_user_id(&pool, default_id).await, Some(admin.id));
+            .unwrap();
+        apply_migrations_through(&pool, 3).await;
+        ensure_default_deck(&pool).await.unwrap();
+        insert_deck(&pool, "Preexisting").await;
+        pool.close().await;
 
+        let pool = open(&path).await.unwrap();
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+        let store = SqliteStore::new(pool.clone());
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
         let home = domain::list_home(&store, admin.id, noon()).await.unwrap();
-        assert_eq!(home.len(), 2);
-        assert!(home.iter().any(|d| d.deck.name == "Preexisting"));
-        assert!(home.iter().any(|d| d.deck.name == DEFAULT_DECK_NAME));
-        assert_eq!(
-            home.iter()
-                .filter(|d| d.deck.name == DEFAULT_DECK_NAME)
-                .count(),
-            1
-        );
+        assert_eq!(home.len(), 1);
+        assert_eq!(home[0].deck.name, DEFAULT_DECK_NAME);
+        assert_eq!(deck_user_id(&pool, home[0].deck.id).await, admin.id);
+        assert!(home.iter().all(|d| d.deck.name != "Preexisting"));
+
+        pool.close().await;
+        remove_db(&path);
     }
 
     #[tokio::test]
-    async fn bootstrap_seeds_default_when_no_orphans() {
+    async fn bootstrap_seeds_default() {
         let pool = open_memory_migrations_only().await;
         let store = SqliteStore::new(pool.clone());
         assert!(list_decks(&pool).await.unwrap().is_empty());
@@ -1603,7 +1702,7 @@ mod tests {
         let home = domain::list_home(&store, admin.id, noon()).await.unwrap();
         assert_eq!(home.len(), 1);
         assert_eq!(home[0].deck.name, DEFAULT_DECK_NAME);
-        assert_eq!(deck_user_id(&pool, home[0].deck.id).await, Some(admin.id));
+        assert_eq!(deck_user_id(&pool, home[0].deck.id).await, admin.id);
     }
 
     #[tokio::test]
