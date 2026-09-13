@@ -91,12 +91,10 @@ jobs:
           path: deploy/bin/arm64
 
       - name: Mark binaries executable
-        run: |
-          set -euo pipefail
-          chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
-          file deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
-          file deploy/bin/amd64/flashcards | grep -Eq 'x86-64|x86_64'
-          file deploy/bin/arm64/flashcards | grep -Eq 'ARM aarch64|aarch64'
+        run: chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+
+      - name: Assert artifact architectures
+        run: ./scripts/assert-deploy-bin-arch.sh
 
       - name: Write pack-time identity files
         run: |
@@ -184,5 +182,10 @@ jobs:
             "${IMAGE}:${GITHUB_SHA::7}-amd64" \
             "${IMAGE}:${GITHUB_SHA::7}-arm64"
 
-      - name: Inspect multi-arch manifest
-        run: docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA::7}"
+      - name: Assert multi-arch manifest lists both platforms
+        run: |
+          set -euo pipefail
+          inspect="$(docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA::7}")"
+          echo "${inspect}"
+          echo "${inspect}" | grep -Eq 'Platform:[[:space:]]+linux/amd64'
+          echo "${inspect}" | grep -Eq 'Platform:[[:space:]]+linux/arm64'
