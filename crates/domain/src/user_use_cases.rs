@@ -38,6 +38,43 @@ pub async fn authenticate<S: Store>(
     Ok((user, session))
 }
 
+/// Load a live Session and its User; refresh sliding idle. Expired, missing,
+/// unknown, or disabled Users yield `Ok(None)` (disabled wipes all Sessions).
+pub async fn resolve_session<S: Store>(
+    store: &S,
+    session_id: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<(User, Session)>, Error> {
+    let Some(session) = store.get_session(session_id).await? else {
+        return Ok(None);
+    };
+    if session.is_idle_expired(now) {
+        store.delete_session(session_id).await?;
+        return Ok(None);
+    }
+    let Some(user) = store.get_user(session.user_id).await? else {
+        store.delete_session(session_id).await?;
+        return Ok(None);
+    };
+    if user.disabled {
+        store.delete_sessions_for_user(user.id).await?;
+        return Ok(None);
+    }
+    let session = store
+        .touch_session(session_id, now)
+        .await?
+        .unwrap_or(session);
+    Ok(Some((user, session)))
+}
+
+pub async fn logout<S: Store>(store: &S, session_id: &str) -> Result<(), Error> {
+    store.delete_session(session_id).await
+}
+
+pub async fn logout_everywhere<S: Store>(store: &S, user_id: UserId) -> Result<(), Error> {
+    store.delete_sessions_for_user(user_id).await
+}
+
 pub async fn change_password<S: Store>(
     store: &S,
     user_id: UserId,
@@ -252,6 +289,66 @@ mod tests {
             Error::InvalidCredentials
         ));
         assert_eq!(store.sessions_for(member.id), 0);
+    }
+
+    #[tokio::test]
+    async fn resolve_session_refreshes_idle_and_rejects_expired_or_disabled() {
+        let store = MemStore::empty();
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        let (_, session) = authenticate(&store, "admin", "secret", noon())
+            .await
+            .unwrap();
+
+        let later = noon() + chrono::Duration::hours(1);
+        let (user, touched) = resolve_session(&store, &session.id, later)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, admin.id);
+        assert_eq!(touched.last_used_at, later);
+
+        store.set_last_used(&session.id, noon());
+        let expired = noon() + crate::SESSION_IDLE + chrono::Duration::seconds(1);
+        assert!(
+            resolve_session(&store, &session.id, expired)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.get_session(&session.id).await.unwrap().is_none());
+
+        let member = admin_create_user(&store, admin.id, "member", "pw")
+            .await
+            .unwrap();
+        let (_, member_session) = authenticate(&store, "member", "pw", noon()).await.unwrap();
+        store.set_disabled(member.id, true).await.unwrap();
+        assert!(
+            resolve_session(&store, &member_session.id, noon())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.sessions_for(member.id), 0);
+    }
+
+    #[tokio::test]
+    async fn logout_ends_this_session_or_all() {
+        let store = MemStore::empty();
+        bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        let (_, first) = authenticate(&store, "admin", "secret", noon())
+            .await
+            .unwrap();
+        let (user, second) = authenticate(&store, "admin", "secret", noon())
+            .await
+            .unwrap();
+        assert_eq!(store.session_count(), 2);
+
+        logout(&store, &first.id).await.unwrap();
+        assert!(store.get_session(&first.id).await.unwrap().is_none());
+        assert!(store.get_session(&second.id).await.unwrap().is_some());
+
+        logout_everywhere(&store, user.id).await.unwrap();
+        assert_eq!(store.session_count(), 0);
     }
 
     #[tokio::test]

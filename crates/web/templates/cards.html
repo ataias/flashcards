@@ -4,6 +4,7 @@
   {% endif %}
 
   <form class="create-card" hx-post="/decks/{{ deck_id }}/cards" hx-target="#cards" hx-swap="outerHTML">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>
       Front
       <textarea name="front" required rows="3" placeholder="Prompt" autocomplete="off">{{ draft.create_front() }}</textarea>
@@ -33,6 +34,7 @@
         </p>
       </div>
       <form class="edit-card" hx-post="/cards/{{ card.id }}" hx-target="#cards" hx-swap="outerHTML">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
         <label>
           <span class="visually-hidden">Front</span>
           <textarea name="front" required rows="2" autocomplete="off">{{ card.form_front(draft) }}</textarea>
@@ -44,6 +46,7 @@
         <button type="submit">Save</button>
       </form>
       <form class="inline" hx-post="/cards/{{ card.id }}/delete" hx-target="#cards" hx-swap="outerHTML" hx-confirm="Delete this Card?">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit">Delete</button>
       </form>
     </li>

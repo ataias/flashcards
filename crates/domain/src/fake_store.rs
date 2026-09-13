@@ -73,6 +73,12 @@ impl MemStore {
             .count()
     }
 
+    pub(crate) fn set_last_used(&self, session_id: &str, at: DateTime<Utc>) {
+        if let Some(session) = self.lock().sessions.get_mut(session_id) {
+            session.last_used_at = at;
+        }
+    }
+
     fn first_reviews_for_deck(inner: &Inner, deck_id: DeckId) -> Vec<DateTime<Utc>> {
         let mut firsts: BTreeMap<CardId, DateTime<Utc>> = BTreeMap::new();
         for entry in &inner.reviews {
@@ -416,6 +422,19 @@ impl Store for MemStore {
 
     async fn get_session(&self, session_id: &str) -> Result<Option<Session>, Error> {
         Ok(self.lock().sessions.get(session_id).cloned())
+    }
+
+    async fn touch_session(
+        &self,
+        session_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Session>, Error> {
+        let mut inner = self.lock();
+        let Some(session) = inner.sessions.get_mut(session_id) else {
+            return Ok(None);
+        };
+        session.last_used_at = now;
+        Ok(Some(session.clone()))
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<(), Error> {

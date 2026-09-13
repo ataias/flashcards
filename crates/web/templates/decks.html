@@ -4,6 +4,7 @@
   {% endif %}
 
   <form class="create-deck" hx-post="/decks" hx-target="#decks" hx-swap="outerHTML">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>
       New Deck
       <input type="text" name="name" required placeholder="Deck name" autocomplete="off">
@@ -24,6 +25,7 @@
         <a href="/decks/{{ deck.id }}/study">Study</a>
       </div>
       <form class="inline" hx-post="/decks/{{ deck.id }}/rename" hx-target="#decks" hx-swap="outerHTML">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
         <label>
           <span class="visually-hidden">Rename {{ deck.name }}</span>
           <input type="text" name="name" value="{{ deck.name }}" required autocomplete="off">
@@ -31,6 +33,7 @@
         <button type="submit">Rename</button>
       </form>
       <form class="inline" hx-post="/decks/{{ deck.id }}/delete" hx-target="#decks" hx-swap="outerHTML" hx-confirm="Delete this Deck and all its Cards?">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit">Delete</button>
       </form>
     </li>
