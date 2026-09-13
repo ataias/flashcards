@@ -1993,21 +1993,16 @@ async fn non_admin_admin_routes_are_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!html.contains("<h1>Users</h1>"));
 
-    for (path, body) in [
-        ("/admin/users", "username=other&password=pw"),
+    let posts = [
+        ("/admin/users".to_string(), "username=other&password=pw"),
+        (format!("/admin/users/{admin_id}/disable"), ""),
+        (format!("/admin/users/{admin_id}/delete"), ""),
         (
-            "/admin/users/{id}/disable".replace("{id}", &admin_id.to_string()),
-            "",
-        ),
-        (
-            "/admin/users/{id}/delete".replace("{id}", &admin_id.to_string()),
-            "",
-        ),
-        (
-            "/admin/users/{id}/reset-password".replace("{id}", &member_id.to_string()),
+            format!("/admin/users/{member_id}/reset-password"),
             "password=x",
         ),
-    ] {
+    ];
+    for (path, body) in posts {
         let (status, html) = post_form(app(&db), &path, body, false, &member).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
         assert!(!html.contains("<h1>Users</h1>"), "{path}");

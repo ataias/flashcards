@@ -63,8 +63,7 @@ pub async fn study_page<S: Store>(
     csrf: CsrfToken,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    let deck = domain::get_deck(&store, user_id, deck_id)
+    let deck = domain::get_deck(&store, auth.user.id, deck_id)
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
     let card = next_card(&store, auth.user.id, deck_id).await?;
