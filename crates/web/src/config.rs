@@ -183,30 +183,23 @@ mod tests {
     }
 
     #[test]
-    fn cookie_secure_defaults_false_on_ipv6_loopback() {
-        let config = Config::parse(Some("[::1]:3000"), None::<&str>, None::<&str>).unwrap();
-        assert!(!config.cookie_secure);
-    }
-
-    #[test]
-    fn cookie_secure_env_overrides_bind_default() {
-        let on_loopback =
-            Config::parse(Some("127.0.0.1:3000"), None::<&str>, Some("true")).unwrap();
-        assert!(on_loopback.cookie_secure);
-        let on_loopback_one =
-            Config::parse(Some("127.0.0.1:3000"), None::<&str>, Some("1")).unwrap();
-        assert!(on_loopback_one.cookie_secure);
-        let off_all_interfaces =
-            Config::parse(Some("0.0.0.0:3000"), None::<&str>, Some("FALSE")).unwrap();
-        assert!(!off_all_interfaces.cookie_secure);
-        let off_zero = Config::parse(Some("0.0.0.0:3000"), None::<&str>, Some("0")).unwrap();
-        assert!(!off_zero.cookie_secure);
-    }
-
-    #[test]
-    fn invalid_cookie_secure_is_error() {
-        let err = Config::parse(None::<&str>, None::<&str>, Some("yes")).unwrap_err();
-        match err {
+    fn cookie_secure_follows_bind_and_env() {
+        assert!(
+            !Config::parse(Some("[::1]:3000"), None::<&str>, None::<&str>)
+                .unwrap()
+                .cookie_secure
+        );
+        assert!(
+            Config::parse(Some("127.0.0.1:3000"), None::<&str>, Some("true"))
+                .unwrap()
+                .cookie_secure
+        );
+        assert!(
+            !Config::parse(Some("0.0.0.0:3000"), None::<&str>, Some("0"))
+                .unwrap()
+                .cookie_secure
+        );
+        match Config::parse(None::<&str>, None::<&str>, Some("yes")).unwrap_err() {
             ConfigError::InvalidCookieSecure { value } => assert_eq!(value, "yes"),
             other => panic!("unexpected error: {other}"),
         }

@@ -138,10 +138,7 @@ async fn set_review(pool: &SqlitePool, card_id: i64, due: chrono::DateTime<chron
 
 fn extract_csrf(html: &str) -> String {
     let needle = "name=\"csrf\" value=\"";
-    let start = html
-        .find(needle)
-        .unwrap_or_else(|| panic!("csrf field in {html}"))
-        + needle.len();
+    let start = html.find(needle).unwrap_or_else(|| panic!("csrf field")) + needle.len();
     let end = html[start..].find('"').expect("csrf value");
     html[start..start + end].to_string()
 }
@@ -151,27 +148,27 @@ fn set_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .get_all(header::SET_COOKIE)
         .iter()
         .find_map(|value| {
-            let value = value.to_str().ok()?;
-            let pair = value.split(';').next()?;
+            let pair = value.to_str().ok()?.split(';').next()?;
             let (key, val) = pair.split_once('=')?;
             (key.trim() == name).then(|| val.trim().to_string())
         })
 }
 
-async fn csrf_from_home(app: Router) -> (String, String) {
-    let (status, headers, html) = request_parts(
+async fn csrf_cookie(app: Router) -> String {
+    let (status, headers, _) = request_parts(
         app,
-        Request::builder().uri("/").body(Body::empty()).unwrap(),
+        Request::builder()
+            .uri("/about")
+            .body(Body::empty())
+            .unwrap(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let csrf = extract_csrf(&html);
-    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
-    (csrf, csrf_cookie)
+    set_cookie_value(&headers, "csrf").expect("csrf cookie")
 }
 
 async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCode, String) {
-    let (csrf, csrf_cookie) = csrf_from_home(app.clone()).await;
+    let csrf = csrf_cookie(app.clone()).await;
     let body = if body.is_empty() {
         format!("csrf={csrf}")
     } else {
@@ -181,8 +178,7 @@ async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCo
         .method("POST")
         .uri(path)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header(header::COOKIE, format!("csrf={csrf_cookie}"))
-        .header("X-CSRF-Token", &csrf);
+        .header(header::COOKIE, format!("csrf={csrf}"));
     if htmx {
         builder = builder.header("HX-Request", "true");
     }
@@ -1351,25 +1347,45 @@ async fn empty_db_redirects_to_bootstrap_and_keeps_about_public() {
     assert!(html.contains("About"));
 }
 
+async fn login_attempt(app: Router, csrf: &str, password: &str) -> (StatusCode, HeaderMap, String) {
+    request_parts(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header(header::COOKIE, format!("csrf={csrf}"))
+            .body(Body::from(format!(
+                "username=admin&password={password}&csrf={csrf}"
+            )))
+            .unwrap(),
+    )
+    .await
+}
+
 #[tokio::test]
 async fn csrf_rejects_bad_token() {
     let db = test_db().await;
-    let (status, html) = {
-        let (csrf, csrf_cookie) = csrf_from_home(app(&db)).await;
-        let (status, html) = request(
-            app(&db),
-            Request::builder()
-                .method("POST")
-                .uri("/decks")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header(header::COOKIE, format!("csrf={csrf_cookie}"))
-                .header("X-CSRF-Token", "not-the-token")
-                .body(Body::from(format!("name=Nope&csrf={csrf}")))
-                .unwrap(),
-        )
-        .await;
-        (status, html)
-    };
+    let (status, headers, html) = request_parts(
+        app(&db),
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf = extract_csrf(&html);
+    let cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+    assert_eq!(csrf, cookie);
+    let (status, html) = request(
+        app(&db),
+        Request::builder()
+            .method("POST")
+            .uri("/decks")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header(header::COOKIE, format!("csrf={cookie}"))
+            .body(Body::from("name=Nope&csrf=not-the-token"))
+            .unwrap(),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("Invalid CSRF token"));
     assert!(
@@ -1385,54 +1401,13 @@ async fn csrf_rejects_bad_token() {
 async fn login_rate_limit_trips() {
     let db = test_db().await;
     let router = app(&db);
-    let (status, headers, _) = request_parts(
-        router.clone(),
-        Request::builder()
-            .uri("/about")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
-    let csrf = {
-        let (status, headers, _) = request_parts(
-            router.clone(),
-            Request::builder().uri("/").body(Body::empty()).unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        set_cookie_value(&headers, "csrf").unwrap_or(csrf_cookie.clone())
-    };
-    let cookies = format!("csrf={csrf}");
-    let body = format!("username=admin&password=wrong&csrf={csrf}");
-
+    let csrf = csrf_cookie(router.clone()).await;
     for i in 0..5 {
-        let (status, _, html) = request_parts(
-            router.clone(),
-            Request::builder()
-                .method("POST")
-                .uri("/login")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header(header::COOKIE, &cookies)
-                .body(Body::from(body.clone()))
-                .unwrap(),
-        )
-        .await;
+        let (status, _, html) = login_attempt(router.clone(), &csrf, "wrong").await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {i}");
         assert!(html.contains("Invalid username or password"));
     }
-    let (status, _, html) = request_parts(
-        router,
-        Request::builder()
-            .method("POST")
-            .uri("/login")
-            .header("content-type", "application/x-www-form-urlencoded")
-            .header(header::COOKIE, &cookies)
-            .body(Body::from(body))
-            .unwrap(),
-    )
-    .await;
+    let (status, _, html) = login_attempt(router, &csrf, "wrong").await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert!(html.contains("Too many attempts"));
 }
@@ -1440,26 +1415,13 @@ async fn login_rate_limit_trips() {
 #[tokio::test]
 async fn login_sets_session_cookie_without_secure_on_loopback() {
     let db = test_db().await;
-    let (csrf, csrf_cookie) = csrf_from_home(app(&db)).await;
-    let (status, headers, _) = request_parts(
-        app(&db),
-        Request::builder()
-            .method("POST")
-            .uri("/login")
-            .header("content-type", "application/x-www-form-urlencoded")
-            .header(header::COOKIE, format!("csrf={csrf_cookie}"))
-            .body(Body::from(format!(
-                "username=admin&password=secret&csrf={csrf}"
-            )))
-            .unwrap(),
-    )
-    .await;
+    let csrf = csrf_cookie(app(&db)).await;
+    let (status, headers, _) = login_attempt(app(&db), &csrf, "secret").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/");
     let session = set_cookie_value(&headers, "session").expect("session cookie");
     let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
-    assert!(set_cookie.contains("HttpOnly"));
-    assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(set_cookie.contains("HttpOnly") && set_cookie.contains("SameSite=Strict"));
     assert!(
         !set_cookie.contains("Secure"),
         "loopback tests omit Secure: {set_cookie}"

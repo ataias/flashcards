@@ -3,7 +3,7 @@
 <head>
   {% include "head.html" %}
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ csrf }}"}' data-username="{{ username }}">
+<body>
   <main>
     <h1>Flashcards</h1>
     {% include "decks.html" %}

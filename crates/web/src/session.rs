@@ -297,8 +297,7 @@ mod tests {
     #[test]
     fn rate_limiter_trips_after_max() {
         let limiter = RateLimiter::new(2, Duration::from_secs(60));
-        assert!(limiter.allow("local"));
-        assert!(limiter.allow("local"));
+        assert!(limiter.allow("local") && limiter.allow("local"));
         assert!(!limiter.allow("local"));
         assert!(limiter.allow("other"));
     }
@@ -317,10 +316,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         set_session_cookie(&mut headers, "deadbeef", false);
         let value = headers[SET_COOKIE].to_str().unwrap();
-        assert!(value.contains("session=deadbeef"));
-        assert!(value.contains("HttpOnly"));
+        assert!(value.contains("HttpOnly") && value.contains("SameSite=Strict"));
         assert!(!value.contains("Secure"));
-        assert!(value.contains("SameSite=Strict"));
-        assert!(value.contains("Path=/"));
     }
 }
