@@ -73,7 +73,7 @@ trap on_err ERR
 trap cleanup EXIT
 
 # Stack-only CI harness (not product behavior): seed one admin + Default
-# so the fail-closed binary can boot. #98 must drop this pre-start seed.
+# so the fail-closed binary can boot. The login PR must drop this pre-start seed.
 "${SEED_BIN}" "${DB_PATH}"
 
 FLASHCARDS_DB="${DB_PATH}" FLASHCARDS_BIND="127.0.0.1:${APP_PORT}" \
