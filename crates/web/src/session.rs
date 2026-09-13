@@ -128,10 +128,6 @@ pub fn set_session_cookie(headers: &mut HeaderMap, session_id: &str, secure: boo
     append_cookie(headers, SESSION_COOKIE, session_id, COOKIE_MAX_AGE, secure);
 }
 
-pub fn clear_session_cookie(headers: &mut HeaderMap, secure: bool) {
-    append_cookie(headers, SESSION_COOKIE, "", 0, secure);
-}
-
 pub fn rate_limited() -> Response {
     (StatusCode::TOO_MANY_REQUESTS, "Too many attempts").into_response()
 }
