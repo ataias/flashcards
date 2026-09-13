@@ -1,0 +1,14 @@
+{
+  "name": "flashcards-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "install-lightpanda": "./scripts/install-lightpanda.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
