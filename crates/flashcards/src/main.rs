@@ -18,13 +18,13 @@ async fn main() {
     let user_id = match store.list_users().await {
         Ok(users) => match users.into_iter().next() {
             Some(user) => user.id,
-            None => {
-                eprintln!(
-                    "no users in {}; this process does not create an admin",
-                    config.db_path.display()
-                );
-                std::process::exit(1);
-            }
+            None => match bootstrap_admin_from_env(&store).await {
+                Ok(user) => user.id,
+                Err(err) => {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                }
+            },
         },
         Err(err) => {
             eprintln!("{err}");
@@ -54,4 +54,21 @@ async fn main() {
         eprintln!("server error: {err}");
         std::process::exit(1);
     }
+}
+
+/// Create the first admin only when a password is supplied. No default.
+async fn bootstrap_admin_from_env(store: &SqliteStore) -> Result<domain::User, String> {
+    let password = std::env::var("FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "no users; set FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD to create the first admin, or use a database that already has one".to_string()
+        })?;
+    let username = std::env::var("FLASHCARDS_BOOTSTRAP_ADMIN_USERNAME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "admin".to_string());
+    domain::bootstrap_admin(store, &username, &password)
+        .await
+        .map_err(|err| err.to_string())
 }
