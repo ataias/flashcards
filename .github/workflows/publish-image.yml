@@ -54,9 +54,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "/src"
-          # Include the commit so a cached target/ cannot reuse a binary
-          # compiled with a different or missing FLASHCARDS_GIT_SHA.
-          key: ${{ github.sha }}
 
       - name: Build release binary
         working-directory: /src

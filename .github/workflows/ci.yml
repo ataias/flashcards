@@ -33,9 +33,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          # Same bake as publish-image: do not reuse a target compiled
-          # for a different commit SHA.
-          key: ${{ github.sha }}
 
       - name: Build CI image
         uses: docker/build-push-action@v7
