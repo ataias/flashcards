@@ -74,8 +74,8 @@ cd e2e
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 ./scripts/install-lightpanda.sh
 ./.lightpanda/lightpanda serve --host 127.0.0.1 --port 9222
-# other terminal:
-npx playwright test
+# other terminal (CDP attach only; smoke needs the binary):
+npx playwright test tests/harness.spec.ts
 ```
 
 ## CDP notes
