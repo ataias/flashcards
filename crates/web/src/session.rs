@@ -34,8 +34,6 @@ pub struct CsrfToken(pub String);
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user: User,
-    /// Live Session when a cookie was presented; empty id for the
-    /// seed/e2e implicit User until the e2e child removes that gate.
     pub session: Session,
 }
 
@@ -157,38 +155,13 @@ pub async fn require_auth<S: Store>(
             req.extensions_mut().insert(auth);
             next.run(req).await
         }
-        Ok(None) => match implicit_or_gate(&store).await {
-            Ok(Some(auth)) => {
-                req.extensions_mut().insert(auth);
-                next.run(req).await
-            }
-            Ok(None) => redirect_to_sign_in(req.headers(), "/bootstrap"),
+        Ok(None) => match store.list_users().await {
+            Ok(users) if users.is_empty() => redirect_to_sign_in(req.headers(), "/bootstrap"),
+            Ok(_) => redirect_to_sign_in(req.headers(), "/login"),
             Err(err) => AppError::from(err).into_response(),
         },
         Err(err) => AppError::from(err).into_response(),
     }
-}
-
-/// Seed/e2e compat until login UI lands: if Users exist, treat the first
-/// non-disabled User as signed in when no Session cookie is present.
-async fn implicit_or_gate<S: Store>(store: &S) -> Result<Option<AuthUser>, domain::Error> {
-    let users = store.list_users().await?;
-    if users.is_empty() {
-        return Ok(None);
-    }
-    let Some(user) = users.into_iter().find(|user| !user.disabled) else {
-        return Ok(None);
-    };
-    let now = Utc::now();
-    Ok(Some(AuthUser {
-        user: user.clone(),
-        session: Session {
-            id: String::new(),
-            user_id: user.id,
-            created_at: now,
-            last_used_at: now,
-        },
-    }))
 }
 
 pub async fn csrf_middleware(
