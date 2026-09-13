@@ -49,7 +49,10 @@ cd e2e
 npx playwright test
 ```
 
-Today the only spec is a CDP attach stub (`tests/harness.spec.ts`). It does not need the flashcards process. Keep the binary running when you add the smoke path so `E2E_BASE_URL` resolves.
+Specs:
+
+- `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
+- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`.
 
 ## Lightpanda only (harness check)
 
