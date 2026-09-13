@@ -94,9 +94,9 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
-
-      - name: Assert artifact architectures
-        run: ./scripts/assert-deploy-bin-arch.sh
+          file deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+          file deploy/bin/amd64/flashcards | grep -Eq 'x86-64|x86_64'
+          file deploy/bin/arm64/flashcards | grep -Eq 'ARM aarch64|aarch64'
 
       - name: Write pack-time identity files
         run: |

@@ -21,7 +21,6 @@ ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        file \
         libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --create-home --home-dir /home/flashcards flashcards \
@@ -33,16 +32,6 @@ COPY --chown=flashcards:flashcards crates/web/static /src/crates/web/static
 # Pack-time identity (git-sha, optional git-tag) written by publish-image.yml.
 # /about reads these at runtime so cargo need not rebuild just to stamp SHA.
 COPY --chown=flashcards:flashcards crates/web/pack /src/crates/web/pack
-
-# Fail the pack if the copied binary does not match this platform.
-RUN set -eu; \
-    info=`file /usr/local/bin/flashcards`; \
-    echo "${info}"; \
-    case "${TARGETARCH}" in \
-      amd64) echo "${info}" | grep -Eq 'x86-64|x86_64' ;; \
-      arm64) echo "${info}" | grep -Eq 'ARM aarch64|aarch64' ;; \
-      *) echo "unsupported or empty TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac
 
 # Uncompressed per-arch filesystem size (not GHCR compressed download size).
 # Measured after COPY so identity files are included; the size file itself is tiny.
