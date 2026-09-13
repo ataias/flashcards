@@ -1,23 +1,31 @@
 # Flashcards
 
-A multi-user Anki-like study app: each User has a private space of Decks and Cards, reviews what's due, and reschedules by Rating. Stores everything in a local SQLite file.
+A multi-user Anki-like study app: each User has a private space of Decks and Cards, can subscribe to Courses, reviews what's due, and reschedules by Rating. Stores everything in a local SQLite file.
 
 ## Language
 
 **User**:
-An account that owns a private space of Decks and Cards. Identified by a unique username (case-insensitive) and authenticates with a password (Argon2id hash only). May be disabled (login blocked, sessions wiped). Exactly one bootstrap admin exists in v1.3 (no promote UI); that admin can create, disable, delete other Users and reset their passwords.
+An account that owns a private space of Decks and Cards and may hold Subscriptions to Courses. Identified by a unique username (case-insensitive) and authenticates with a password (Argon2id hash only). May be disabled (login blocked, sessions wiped). Exactly one bootstrap admin exists until a roles grill (#101); that admin can manage Users and Courses.
 _Avoid_: Account (as the primary type name), member, profile
 
 **Session**:
 A server-side login record in SQLite, referenced by an HTTP-only Secure SameSite=Strict cookie. Sliding idle expiry (30 days). Many Sessions per User are allowed. Logout may end this Session or all Sessions; password change, admin password reset, and disable wipe all of that User's Sessions.
 _Avoid_: JWT (as the primary mechanism), token (ambiguous)
 
+**Course**:
+A named curriculum with a title and short description, owned as catalog content (not a User's private space). Contains Course-owned Decks and Cards that only the bootstrap admin edits (MVP). May be **archived** (hidden from the catalog) while existing Subscriptions keep syncing until unsubscribe. Soft-archive is how admin "deletes" a Course that still has subscribers.
+_Avoid_: Class, curriculum (as the type name), lesson pack
+
+**Subscription**:
+A User's enrollment in a Course. On subscribe, the app creates one flattened Course Deck in the User's space (all Course Cards copied into it) with source links. Home lists these under a separate Courses section. Unsubscribe asks keep-as-private (break source links) or delete the Deck.
+_Avoid_: Enrollment (as the primary noun), join, follow
+
 **Card**:
-A flashcard with a front (prompt) and a back (answer). Plain text only until markdown (v2 grill). Each Card belongs to a Deck (hence to one User). Each Card has a **phase**, optional learning step index, FSRS memory (when in Review / after lapse), and a due time. Scheduling policy lives in domain (`Card::apply_rating` / phase transitions); persistence only stores the result. (Future Courses may copy Cards into a subscriber's space with a source link — not v1.3.)
+A flashcard with a front (prompt) and a back (answer). Plain text only until markdown (v2 grill). Private Cards belong to a User-owned Deck. Subscriber copies belong to the User's Course Deck and may link to a Course source Card. Each Card has a **phase**, optional learning step index, FSRS memory (when in Review / after lapse), and a due time. Scheduling stays on the Card. Subscriber copies may be **skipped** (suspended, not due) or **retired** (source removed; User may keep or delete). Content on Course copies is read-only except applying Course updates.
 _Avoid_: Note, item, flashcard (as a type name)
 
 **Deck**:
-A named collection of Cards owned by one User. When a User is created, a Deck named "Default" is seeded for that User; afterward zero Decks is allowed for that User (no recreate-on-last-delete); the User creates a Deck before adding Cards or studying. Missing or other-User Deck ids in the UI are 404.
+A named collection of Cards. **Private Decks** are owned by one User (Default seeded on User create; empty list allowed). **Course Decks** on the subscriber side are one flattened Deck per Subscription, listed in the home Courses section. Canonical Course content uses Course-owned Decks (admin Course UI), separate from anyone's private Decks. Missing or inaccessible ids are 404.
 _Avoid_: Folder, set, pile, collection
 
 **Phase**:
@@ -33,7 +41,7 @@ Step ladder after Again on a Review Card (default: 10 minutes). Same button rule
 _Avoid_: Lapse queue (as the primary noun)
 
 **Study**:
-A session drawn from one of the current User's Decks: Cards with due ≤ now (any phase), plus New Cards under the daily cap (20/day per Deck; day = local midnight). Queue policy lives in domain. A separate Anki-like “learn mode” UI is deferred (future grill #55).
+A session drawn from one Deck (private or Course Deck): Cards with due ≤ now (any phase), plus New Cards under the daily cap (20/day per Deck; day = local midnight). Skipped and retired Cards are excluded. Queue policy lives in domain. A separate Anki-like “learn mode” UI is deferred (future grill #55).
 _Avoid_: Study all, quiz mode, session (as the primary noun for this act)
 
 **New Card**:
@@ -41,7 +49,7 @@ A Card in phase New. The first Rating leaves New using Learning rules at step 0 
 _Avoid_: Unseen, unseen card, freshman
 
 **Review**:
-(1) The phase for long-term FSRS scheduling. (2) One attempt to recall a Card's back: show front, reveal back, then a Rating. No typed answer.
+(1) The phase for long-term FSRS scheduling. (2) One attempt to recall a Card's back: show front, reveal back, then a Rating. No typed answer. On each Rating, subscriber Course copies store a front/back snapshot used later for update diffs.
 _Avoid_: Study, quiz, attempt (as the noun for this act)
 
 **Review log**:
@@ -61,5 +69,5 @@ Hybrid: fixed Learning/Relearning steps, then FSRS (`fsrs` crate, FSRS v6, defau
 _Avoid_: SM-2, Anki algorithm (ambiguous), SRS (generic), rs-fsrs
 
 **Store**:
-The single persistence port in `domain` (one trait, not per-entity repositories). Includes Deck/Card/study ports and User/Session ports. Implemented by `db` (SQLx/SQLite). Use cases load through Store and call domain policy; HTTP never imports SQLite.
+The single persistence port in `domain` (one trait, not per-entity repositories). Includes Deck/Card/study ports, User/Session ports, and Course/Subscription/copy-sync ports. Implemented by `db` (SQLx/SQLite). Use cases load through Store and call domain policy; HTTP never imports SQLite.
 _Avoid_: Repository (as the primary noun), Dao, Unit of Work
