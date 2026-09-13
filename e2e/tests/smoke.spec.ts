@@ -10,8 +10,10 @@ const BACK = "e2e smoke back";
 /**
  * Users happy path: empty DB stays up → bootstrap → login → Default
  * (seeded on bootstrap) → create Card → Study reveal + rate → /about.
- * Auth and Deck/Card/Study posts go through real forms so CSRF cookie+field
- * stay in sync. No API fallbacks that omit csrf. No seed_ci_admin.
+ * This spec is the prepare path (no seed binary): Playwright creates the
+ * first admin through the real bootstrap form. Auth and Deck/Card/Study
+ * posts go through real forms so CSRF cookie+field stay in sync. No API
+ * fallbacks that omit csrf.
  *
  * Lightpanda stores Secure cookies on http:// but does not attach them to
  * form POSTs (Chrome's localhost exception). Re-add them without Secure
