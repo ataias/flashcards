@@ -32,6 +32,12 @@ fn app(db: &TestDb) -> Router {
     web::app(db.store.clone(), db.user_id)
 }
 
+async fn owned_deck(db: &TestDb, name: &str) -> db::Deck {
+    domain::create_deck(&db.store, db.user_id, name)
+        .await
+        .unwrap()
+}
+
 async fn request(app: Router, req: Request<Body>) -> (StatusCode, String) {
     let (status, _, body) = request_parts(app, req).await;
     (status, body)
@@ -985,7 +991,7 @@ async fn study_stays_inside_the_requested_deck() {
     let db = test_db().await;
     let pool = &db.pool;
     let default_id = db::list_decks(pool).await.unwrap()[0].id;
-    let other = db::create_deck(pool, "Spanish").await.unwrap();
+    let other = owned_deck(&db, "Spanish").await;
     db::create_card(pool, default_id, "Default front", "Default back")
         .await
         .unwrap();
@@ -1197,7 +1203,7 @@ async fn new_cap_consumed_on_enter_learning_including_easy_from_new() {
     assert!(html.contains("due 0"));
     assert!(html.contains("new 0"));
 
-    let easy_deck = db::create_deck(pool, "EasyCap").await.unwrap();
+    let easy_deck = owned_deck(&db, "EasyCap").await;
     for i in 0..21 {
         db::create_card(pool, easy_deck.id, &format!("E{i}"), &format!("A{i}"))
             .await

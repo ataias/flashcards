@@ -172,8 +172,10 @@ pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
     Ok(pool)
 }
 
-/// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent `open`
-/// cannot both observe an empty table and insert a second Default.
+/// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent test
+/// helpers cannot both observe an empty table and insert a second Default.
+/// Production `open` does not seed; Default is created per User.
+#[cfg(test)]
 async fn ensure_default_deck(pool: &SqlitePool) -> Result<(), Error> {
     let mut conn = pool.acquire().await?;
     sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
@@ -193,6 +195,7 @@ pub async fn delete_deck(pool: &SqlitePool, deck_id: i64) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(test)]
 async fn seed_default_if_empty(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
 ) -> Result<(), Error> {
@@ -208,6 +211,7 @@ async fn seed_default_if_empty(
     Ok(())
 }
 
+#[cfg(test)]
 async fn finish_immediate<T>(
     mut conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
     result: Result<T, Error>,
