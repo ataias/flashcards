@@ -2,6 +2,7 @@
 
 mod error;
 mod home;
+mod interval;
 mod phase;
 mod queue;
 mod rating;
@@ -14,6 +15,7 @@ use chrono::{DateTime, Utc};
 pub use error::Error;
 pub use fsrs::MemoryState;
 pub use home::summarize_home;
+pub use interval::{card_list_due_label, humanize_due_delta};
 pub use phase::{LEARNING_STEPS, Phase, RELEARNING_STEPS};
 pub use queue::{
     NEW_CARDS_PER_LOCAL_DAY, apply_daily_new_cap, capped_new_count_for_local_day, is_due_at,
@@ -158,12 +160,20 @@ pub struct DeckSummary {
     pub new_count: usize,
 }
 
-/// Front/back list row for a Deck page (no FSRS columns).
+/// Deck page list row: front/back plus phase and due (no FSRS memory).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardText {
     pub id: CardId,
     pub front: String,
     pub back: String,
+    pub phase: Phase,
+    pub due: Option<DateTime<Utc>>,
+}
+
+impl CardText {
+    pub fn due_label(&self, now: DateTime<Utc>) -> Option<String> {
+        card_list_due_label(self.phase, self.due, now)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

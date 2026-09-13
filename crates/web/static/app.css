@@ -129,6 +129,15 @@ textarea {
   color: color-mix(in srgb, currentColor 65%, transparent);
 }
 
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: 0.9rem;
+}
+
 .empty {
   color: color-mix(in srgb, currentColor 65%, transparent);
 }
