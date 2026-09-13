@@ -15,7 +15,7 @@ async fn main() {
         std::process::exit(1);
     });
     let store = SqliteStore::new(pool.clone());
-    // TODO: remove in #98
+    // TODO: remove when login/bootstrap UI lands
     let user_id = match store.list_users().await {
         Ok(users) => match users.into_iter().next() {
             Some(user) => user.id,
