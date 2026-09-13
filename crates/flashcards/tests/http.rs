@@ -107,6 +107,10 @@ async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCo
     request(app, builder.body(Body::from(body.to_string())).unwrap()).await
 }
 
+fn interval_html(label: &str) -> String {
+    label.replace('&', "&#38;").replace('<', "&#60;")
+}
+
 #[tokio::test]
 async fn about_shows_commit_identity_and_release_link() {
     let db = test_db().await;
@@ -615,6 +619,46 @@ async fn reveal_shows_back_and_ratings() {
     assert!(html.contains("Easy"));
     assert!(html.contains(r#"method="post""#));
     assert!(html.contains(&format!(r#"action="/cards/{}/rate""#, card.id)));
+}
+
+#[tokio::test]
+async fn reveal_shows_interval_previews() {
+    let db = test_db().await;
+    let pool = &db.pool;
+    let deck_id = db::list_decks(pool).await.unwrap()[0].id;
+    let card = db::create_card(pool, deck_id, "Q", "A").await.unwrap();
+    let now = chrono::Utc::now();
+    let again = card.preview_interval_label(db::Rating::Again, now).unwrap();
+    let hard = card.preview_interval_label(db::Rating::Hard, now).unwrap();
+    let good = card.preview_interval_label(db::Rating::Good, now).unwrap();
+    let easy = card.preview_interval_label(db::Rating::Easy, now).unwrap();
+
+    let (status, html) = post_form(app(&db), &format!("/cards/{}/reveal", card.id), "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(&interval_html(&again)));
+    assert!(html.contains(&interval_html(&hard)));
+    assert!(html.contains(&interval_html(&good)));
+    assert!(html.contains(&interval_html(&easy)));
+    assert!(html.contains(&format!(
+        "Again <span class=\"interval\">{}</span>",
+        interval_html(&again)
+    )));
+    assert!(html.contains(&format!(
+        "Hard <span class=\"interval\">{}</span>",
+        interval_html(&hard)
+    )));
+    assert!(html.contains(&format!(
+        "Good <span class=\"interval\">{}</span>",
+        interval_html(&good)
+    )));
+    assert!(html.contains(&format!(
+        "Easy <span class=\"interval\">{}</span>",
+        interval_html(&easy)
+    )));
+
+    let stored = db::get_card(pool, card.id).await.unwrap().unwrap();
+    assert_eq!(stored, card);
+    assert!(review_ratings(pool, card.id).await.is_empty());
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ mod schedule;
 mod store;
 mod use_cases;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 pub use error::Error;
 pub use fsrs::MemoryState;
@@ -78,6 +78,24 @@ impl Card {
                 rating,
             },
         ))
+    }
+
+    /// Next due delta for `rating` at `now` without persisting or logging.
+    pub fn preview_due_delta(
+        &self,
+        rating: Rating,
+        now: DateTime<Utc>,
+    ) -> Result<Duration, ScheduleError> {
+        let (updated, _) = self.apply_rating(rating, now)?;
+        Ok(updated.due.unwrap_or(now) - now)
+    }
+
+    pub fn preview_interval_label(
+        &self,
+        rating: Rating,
+        now: DateTime<Utc>,
+    ) -> Result<String, ScheduleError> {
+        Ok(humanize_due_delta(self.preview_due_delta(rating, now)?))
     }
 }
 
@@ -459,5 +477,66 @@ mod apply_rating_tests {
         assert_eq!(updated.learning_step, Some(0));
         assert_eq!(updated.due, Some(now + RELEARNING_STEPS[0]));
         assert_eq!(updated.memory, Some(memory));
+    }
+
+    #[test]
+    fn preview_due_delta_matches_apply_rating_without_mutating() {
+        let now = noon();
+        let last = now - Duration::days(1);
+        let cards = [
+            new_card(),
+            learning_card(1, now - Duration::minutes(10), now),
+            review_card(
+                MemoryState {
+                    stability: 5.0,
+                    difficulty: 5.0,
+                },
+                last,
+                now,
+            ),
+        ];
+        for card in cards {
+            let before = card.clone();
+            for rating in [Rating::Again, Rating::Hard, Rating::Good, Rating::Easy] {
+                let delta = card.preview_due_delta(rating, now).unwrap();
+                let (updated, _) = card.apply_rating(rating, now).unwrap();
+                assert_eq!(delta, updated.due.unwrap() - now);
+                assert_eq!(
+                    card.preview_interval_label(rating, now).unwrap(),
+                    humanize_due_delta(delta)
+                );
+            }
+            assert_eq!(card, before);
+        }
+    }
+
+    #[test]
+    fn preview_learning_steps_are_one_and_ten_minutes() {
+        let now = noon();
+        let card = new_card();
+        assert_eq!(
+            card.preview_due_delta(Rating::Again, now).unwrap(),
+            LEARNING_STEPS[0]
+        );
+        assert_eq!(
+            card.preview_due_delta(Rating::Hard, now).unwrap(),
+            LEARNING_STEPS[0]
+        );
+        assert_eq!(
+            card.preview_due_delta(Rating::Good, now).unwrap(),
+            LEARNING_STEPS[1]
+        );
+        assert_eq!(
+            card.preview_interval_label(Rating::Again, now).unwrap(),
+            "1m"
+        );
+        assert_eq!(
+            card.preview_interval_label(Rating::Hard, now).unwrap(),
+            "1m"
+        );
+        assert_eq!(
+            card.preview_interval_label(Rating::Good, now).unwrap(),
+            "10m"
+        );
     }
 }

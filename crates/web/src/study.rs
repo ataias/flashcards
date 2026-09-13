@@ -31,6 +31,10 @@ struct StudyCard {
     id: i64,
     front: String,
     back: String,
+    again_interval: String,
+    hard_interval: String,
+    good_interval: String,
+    easy_interval: String,
 }
 
 #[derive(Deserialize)]
@@ -60,7 +64,7 @@ pub async fn reveal<S: Store>(
     render_review(
         &store,
         card.deck_id,
-        Some(study_card(&card)),
+        Some(study_card(&card)?),
         true,
         None,
         &headers,
@@ -81,7 +85,7 @@ pub async fn rate<S: Store>(
         return render_review(
             &store,
             card.deck_id,
-            Some(study_card(&card)),
+            Some(study_card(&card)?),
             true,
             Some("Choose Again, Hard, Good, or Easy."),
             &headers,
@@ -151,15 +155,31 @@ fn render_full(
 }
 
 async fn next_card<S: Store>(store: &S, deck_id: i64) -> Result<Option<StudyCard>, AppError> {
-    Ok(domain::next_study_card(store, deck_id, Local::now())
-        .await?
-        .map(|card| study_card(&card)))
+    match domain::next_study_card(store, deck_id, Local::now()).await? {
+        Some(card) => Ok(Some(study_card(&card)?)),
+        None => Ok(None),
+    }
 }
 
-fn study_card(card: &domain::Card) -> StudyCard {
-    StudyCard {
+fn study_card(card: &domain::Card) -> Result<StudyCard, AppError> {
+    let now = Utc::now();
+    Ok(StudyCard {
         id: card.id,
         front: card.front.clone(),
         back: card.back.clone(),
-    }
+        again_interval: interval_label(card, Rating::Again, now)?,
+        hard_interval: interval_label(card, Rating::Hard, now)?,
+        good_interval: interval_label(card, Rating::Good, now)?,
+        easy_interval: interval_label(card, Rating::Easy, now)?,
+    })
+}
+
+fn interval_label(
+    card: &domain::Card,
+    rating: Rating,
+    now: chrono::DateTime<Utc>,
+) -> Result<String, AppError> {
+    card.preview_interval_label(rating, now)
+        .map_err(domain::Error::from)
+        .map_err(AppError::from)
 }

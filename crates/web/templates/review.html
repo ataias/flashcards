@@ -9,10 +9,10 @@
     {% if revealed %}
     <p class="card-back">{{ card.back }}</p>
     <form class="ratings" method="post" action="/cards/{{ card.id }}/rate" hx-post="/cards/{{ card.id }}/rate" hx-target="#study" hx-swap="outerHTML">
-      <button type="submit" name="rating" value="1">Again</button>
-      <button type="submit" name="rating" value="2">Hard</button>
-      <button type="submit" name="rating" value="3">Good</button>
-      <button type="submit" name="rating" value="4">Easy</button>
+      <button type="submit" name="rating" value="1">Again <span class="interval">{{ card.again_interval }}</span></button>
+      <button type="submit" name="rating" value="2">Hard <span class="interval">{{ card.hard_interval }}</span></button>
+      <button type="submit" name="rating" value="3">Good <span class="interval">{{ card.good_interval }}</span></button>
+      <button type="submit" name="rating" value="4">Easy <span class="interval">{{ card.easy_interval }}</span></button>
     </form>
     {% else %}
     <form method="post" action="/cards/{{ card.id }}/reveal" hx-post="/cards/{{ card.id }}/reveal" hx-target="#study" hx-swap="outerHTML">
