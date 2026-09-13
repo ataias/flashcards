@@ -20,22 +20,19 @@ Do **not** run `npx playwright install`. Chromium is unused; Lightpanda is the b
 | `LIGHTPANDA_VERSION` | `0.4.0` | Override for `scripts/install-lightpanda.sh` |
 | `LIGHTPANDA_DIR` | `e2e/.lightpanda` | Install directory for the binary |
 | `LIGHTPANDA_SHA256` | (0.4.0 assets baked in) | Required if you override the version; the install script exits 1 without it |
-| `FLASHCARDS_SEED_BIN` | `target/debug/seed_ci_admin` | Stack-only CI harness helper (not product behavior) |
 
 `FLASHCARDS_BIND` / `FLASHCARDS_DB` are process env for the binary (see the repo root README). Point `E2E_BASE_URL` at the listen address you chose.
 
-`run-ci.sh` runs `seed_ci_admin` on the temp DB **before** starting the binary (`e2e` / `e2e-secret`, via `domain::bootstrap_admin` + `SqliteStore`). This is a **stack-only CI harness** for #96 — not product behavior. Production `main` stays fail-closed on an empty User table. **Do not merge #96 alone**; merge bottom-up through #98 so production never ships empty-DB-exit without bootstrap UI. **#98 must drop this pre-start seed** and keep bootstrap → login smoke.
+On this PR, an empty User table makes `flashcards` exit (`this process does not create an admin`) — same as production. There is no `seed_ci_admin` helper. Required `e2e` therefore fails here until this PR is pair-merged with the login/bootstrap PR, which keeps the process up and lets Playwright create the first user in the browser.
 
 ## Local run (binary + Lightpanda)
 
 From the repo root, three processes: the app, Lightpanda, then Playwright.
 
 ```bash
-# 1. App (empty DB: seed first — the binary does not create an admin)
+# 1. App (empty DB exits on this PR — no seed; pair-merge with login PR to boot)
 cargo build -p flashcards
-DB="$(mktemp -d)/flashcards.db"
-./target/debug/seed_ci_admin "$DB"
-FLASHCARDS_DB="$DB" FLASHCARDS_BIND=127.0.0.1:3000 \
+FLASHCARDS_DB="$(mktemp -d)/flashcards.db" FLASHCARDS_BIND=127.0.0.1:3000 \
   ./target/debug/flashcards
 ```
 
@@ -57,7 +54,7 @@ npx playwright test
 Specs:
 
 - `tests/harness.spec.ts` — CDP attach stub (Lightpanda only; no flashcards process).
-- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL` (empty DB: run `seed_ci_admin` first).
+- `tests/smoke.spec.ts` — pre-Users happy path: `/` → Default deck → create Card → Study reveal + rate → `/about`. Needs the binary at `E2E_BASE_URL`. On this PR an empty DB exits (no seed); smoke is green only after pair-merge with the login PR.
 
 ## CI-equivalent local run
 

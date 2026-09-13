@@ -11,16 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 E2E="${ROOT}/e2e"
 BIN="${FLASHCARDS_BIN:-${ROOT}/target/debug/flashcards}"
-SEED_BIN="${FLASHCARDS_SEED_BIN:-${ROOT}/target/debug/seed_ci_admin}"
 LIGHTPANDA="${LIGHTPANDA_BIN:-${E2E}/.lightpanda/lightpanda}"
 
 if [[ ! -x "${BIN}" ]]; then
   echo "error: missing flashcards binary at ${BIN}" >&2
-  echo "Run: cargo build -p flashcards" >&2
-  exit 1
-fi
-if [[ ! -x "${SEED_BIN}" ]]; then
-  echo "error: missing seed_ci_admin binary at ${SEED_BIN}" >&2
   echo "Run: cargo build -p flashcards" >&2
   exit 1
 fi
@@ -71,10 +65,6 @@ on_err() {
 
 trap on_err ERR
 trap cleanup EXIT
-
-# Stack-only CI harness (not product behavior): seed one admin + Default
-# so the fail-closed binary can boot. The login PR must drop this pre-start seed.
-"${SEED_BIN}" "${DB_PATH}"
 
 FLASHCARDS_DB="${DB_PATH}" FLASHCARDS_BIND="127.0.0.1:${APP_PORT}" \
   "${BIN}" >"${SERVER_LOG}" 2>&1 &

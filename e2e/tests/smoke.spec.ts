@@ -6,9 +6,12 @@ const FRONT = "e2e smoke front";
 const BACK = "e2e smoke back";
 
 /**
- * Pre-Users happy path: home → Default deck → create Card →
- * Study reveal + rate → /about. CI harness seeds one admin via
- * `seed_ci_admin` before starting the binary (stack-only; not product).
+ * Pre-Users happy path on current main: home → Default deck → create Card →
+ * Study reveal + rate → /about. No admin or login.
+ *
+ * On this PR an empty User table exits (production, no seed). Required e2e
+ * stays red here until pair-merged with the login PR, which creates the
+ * first user in the browser.
  */
 test("home, Default deck, create card, study, about", async ({ page }) => {
   const serverErrors = trackServerErrors(page);
