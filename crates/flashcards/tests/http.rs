@@ -189,6 +189,8 @@ async fn serves_timing_footer_script() {
     assert_eq!(status, StatusCode::OK);
     assert!(js.contains("page-perf"));
     assert!(js.contains("htmx:afterRequest"));
+    assert!(js.contains("Page loaded in"));
+    assert!(js.contains("Updated in"));
 }
 
 #[tokio::test]

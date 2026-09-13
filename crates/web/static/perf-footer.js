@@ -12,17 +12,17 @@
     return (rounded / 1000).toFixed(1) + "s";
   }
 
-  function show(kind, milliseconds) {
+  function show(label, milliseconds) {
     var footer = document.getElementById("page-perf");
     if (footer) {
-      footer.textContent = kind + " " + format(milliseconds);
+      footer.textContent = label + " " + format(milliseconds);
     }
   }
 
   function showNavigation() {
     var entry = performance.getEntriesByType("navigation")[0];
     if (entry && entry.requestStart > 0) {
-      show("page", entry.responseEnd - entry.requestStart);
+      show("Page loaded in", entry.responseEnd - entry.requestStart);
     }
   }
 
@@ -42,7 +42,7 @@
     // Validation errors come back 200 + fragment and count as updates; 4xx/5xx
     // and network errors are not swapped, so they leave the last value alone.
     if (start !== undefined && event.detail.successful) {
-      show("update", performance.now() - start);
+      show("Updated in", performance.now() - start);
     }
   });
 })();
