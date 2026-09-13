@@ -5,6 +5,13 @@ use axum::response::{IntoResponse, Response};
 pub enum AppError {
     Domain(domain::Error),
     Render(askama::Error),
+    StaticAsset(std::io::Error),
+}
+
+impl AppError {
+    pub(crate) fn static_asset(err: std::io::Error) -> Self {
+        Self::StaticAsset(err)
+    }
 }
 
 impl From<domain::Error> for AppError {
@@ -24,6 +31,7 @@ impl std::fmt::Display for AppError {
         match self {
             Self::Domain(err) => write!(f, "{err}"),
             Self::Render(err) => write!(f, "template error: {err}"),
+            Self::StaticAsset(err) => write!(f, "static asset: {err}"),
         }
     }
 }
@@ -33,6 +41,7 @@ impl std::error::Error for AppError {
         match self {
             Self::Domain(err) => Some(err),
             Self::Render(err) => Some(err),
+            Self::StaticAsset(err) => Some(err),
         }
     }
 }
@@ -66,7 +75,8 @@ impl IntoResponse for AppError {
             err @ (Self::Domain(domain::Error::Schedule(_))
             | Self::Domain(domain::Error::Storage(_))
             | Self::Domain(domain::Error::PasswordHash)
-            | Self::Render(_)) => {
+            | Self::Render(_)
+            | Self::StaticAsset(_)) => {
                 eprintln!("internal error: {err}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
             }

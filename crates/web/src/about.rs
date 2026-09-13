@@ -1,6 +1,7 @@
 use askama::Template;
 use axum::response::{Html, IntoResponse, Response};
 
+use crate::assets::Head;
 use crate::build_info::{
     VERSION, commit_url, git_sha, git_tag, image_size_label, release_label, release_url, short_sha,
     uncompressed_image_size_bytes,
@@ -16,6 +17,7 @@ struct AboutTemplate {
     release_url: String,
     release_label: String,
     image_size: String,
+    head: Head,
 }
 
 pub async fn about() -> Result<Response, AppError> {
@@ -29,6 +31,7 @@ pub async fn about() -> Result<Response, AppError> {
             release_url: release_url(tag.as_deref()),
             release_label: release_label(tag.as_deref(), VERSION),
             image_size: image_size_label(uncompressed_image_size_bytes()),
+            head: Head::new("About — Flashcards")?,
         }
         .render()?,
     )

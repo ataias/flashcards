@@ -6,6 +6,7 @@ use chrono::Local;
 use domain::Store;
 use serde::Deserialize;
 
+use crate::assets::Head;
 use crate::error::AppError;
 use crate::wants_fragment;
 
@@ -14,6 +15,7 @@ use crate::wants_fragment;
 struct HomeTemplate {
     decks: Vec<DeckRow>,
     error: Option<String>,
+    head: Head,
 }
 
 #[derive(Template)]
@@ -97,6 +99,7 @@ async fn render_home<S: Store>(store: &S, error: Option<&str>) -> Result<Respons
         HomeTemplate {
             decks,
             error: error.map(str::to_string),
+            head: Head::new("Flashcards")?,
         }
         .render()?,
     )
