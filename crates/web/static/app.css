@@ -10,6 +10,8 @@ body {
   max-width: 40rem;
   padding-inline: max(var(--space-page), env(safe-area-inset-left))
     max(var(--space-page), env(safe-area-inset-right));
+  /* Room for the fixed .page-perf bar. */
+  padding-block-end: 3rem;
   line-height: 1.5;
 }
 
@@ -160,4 +162,22 @@ textarea {
 .interval {
   color: color-mix(in srgb, currentColor 65%, transparent);
   font-size: 0.85em;
+}
+
+.page-perf {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  /* Keeps the bar the same height before the first measurement arrives. */
+  min-block-size: 1.4em;
+  padding: 0.2rem max(var(--space-page), env(safe-area-inset-right))
+    max(0.2rem, env(safe-area-inset-bottom))
+    max(var(--space-page), env(safe-area-inset-left));
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  background: Canvas;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  text-align: right;
+  pointer-events: none;
 }

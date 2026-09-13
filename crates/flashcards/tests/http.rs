@@ -183,6 +183,79 @@ async fn serves_local_css() {
 }
 
 #[tokio::test]
+async fn serves_timing_footer_script() {
+    let db = test_db().await;
+    let (status, js) = get(app(&db), "/static/perf-footer.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(js.contains("page-perf"));
+    assert!(js.contains("htmx:afterRequest"));
+}
+
+#[tokio::test]
+async fn every_page_has_blank_timing_footer_outside_main() {
+    let db = test_db().await;
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+    let (status, _) = post_form(
+        app(&db),
+        &format!("/decks/{deck_id}/cards"),
+        "front=Capital+of+France&back=Paris",
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let paths = [
+        "/".to_string(),
+        format!("/decks/{deck_id}"),
+        format!("/decks/{deck_id}/study"),
+        "/about".to_string(),
+    ];
+    for path in &paths {
+        let (status, html) = get(app(&db), path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(
+            html.contains("/static/perf-footer.js"),
+            "{path} must load the timing script"
+        );
+        // Blank until the browser measures; no server-rendered placeholder.
+        assert!(
+            html.contains("id=\"page-perf\"></footer>"),
+            "{path} must render an empty footer, got {html}"
+        );
+        let footer = html.find("id=\"page-perf\"").unwrap();
+        let main_end = html.find("</main>").expect("page must have a main");
+        assert!(
+            footer > main_end,
+            "{path} footer must sit outside <main> so HTMX swaps cannot replace it"
+        );
+    }
+}
+
+#[tokio::test]
+async fn htmx_fragments_omit_timing_footer() {
+    let db = test_db().await;
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+    let (status, decks) = post_form(app(&db), "/decks", "name=Spanish", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!decks.contains("page-perf"));
+
+    let (status, cards) = post_form(
+        app(&db),
+        &format!("/decks/{deck_id}/cards"),
+        "front=Capital+of+France&back=Paris",
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!cards.contains("page-perf"));
+
+    let card_id = db::list_cards_in_deck(&db.pool, deck_id).await.unwrap()[0].id;
+    let (status, review) = post_form(app(&db), &format!("/cards/{card_id}/reveal"), "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!review.contains("page-perf"));
+}
+
+#[tokio::test]
 async fn htmx_create_rename_delete_last_deck_leaves_empty() {
     let db = test_db().await;
     let pool = &db.pool;
