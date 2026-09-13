@@ -144,6 +144,13 @@ pub trait Store: Send + Sync {
         session_id: &str,
     ) -> impl Future<Output = Result<Option<Session>, Error>> + Send;
 
+    /// Refresh sliding idle (`last_used_at`). Missing Session is `Ok(None)`.
+    fn touch_session(
+        &self,
+        session_id: &str,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<Session>, Error>> + Send;
+
     fn delete_session(&self, session_id: &str) -> impl Future<Output = Result<(), Error>> + Send;
 
     fn delete_sessions_for_user(

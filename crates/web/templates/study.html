@@ -3,8 +3,9 @@
 <head>
   {% include "head.html" %}
 </head>
-<body>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
   <main>
+    {% include "nav.html" %}
     <p class="page-nav"><a href="/">Decks</a> · <a href="/decks/{{ deck_id }}">{{ deck_name }}</a></p>
     <h1>Study</h1>
     {% include "review.html" %}

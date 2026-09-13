@@ -1911,6 +1911,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_touch_updates_last_used_at() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let user = store.create_user("admin", "hash", true).await.unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap();
+        let session = store.create_session(user.id, now).await.unwrap();
+        let later = now + chrono::Duration::hours(2);
+        let touched = store
+            .touch_session(&session.id, later)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(touched.id, session.id);
+        assert_eq!(touched.created_at, now);
+        assert_eq!(touched.last_used_at, later);
+        assert!(
+            store
+                .touch_session("missing", later)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn missing_user_sees_empty_and_cannot_create() {
         let store = SqliteStore::new(open_memory_migrations_only().await);
         let admin = store.create_user("admin", "hash", true).await.unwrap();
