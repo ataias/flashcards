@@ -48,10 +48,22 @@ The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, cl
 
 Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**.
 
-Confirm architectures after publish:
+Pack is two explicit `docker buildx build --platform` invocations (`linux/amd64` / `linux/arm64`) with `--build-arg TARGETARCH=…` each, then `docker buildx imagetools create` for the multi-arch tags. After artifacts download, [`scripts/assert-deploy-bin-arch.sh`](scripts/assert-deploy-bin-arch.sh) checks `file` / `readelf` so `deploy/bin/amd64/flashcards` is x86-64 and `deploy/bin/arm64/flashcards` is ARM aarch64 (the job fails on mismatch). Each image build also `RUN file /usr/local/bin/flashcards` and requires that output to match `TARGETARCH`.
+
+Confirm architectures after publish — index first, then the binary inside each variant:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/ataias/flashcards:latest
+```
+
+```bash
+docker run --rm --platform linux/amd64 --entrypoint file \
+  ghcr.io/ataias/flashcards:latest /usr/local/bin/flashcards
+# expect: ELF 64-bit LSB pie executable, x86-64, ...
+
+docker run --rm --platform linux/arm64 --entrypoint file \
+  ghcr.io/ataias/flashcards:latest /usr/local/bin/flashcards
+# expect: ELF 64-bit LSB pie executable, ARM aarch64, ...
 ```
 
 ```bash
@@ -74,7 +86,7 @@ docker run --rm -v "$PWD":/src -w /src \
 mkdir -p deploy/bin/amd64 crates/web/pack
 cp target/release/flashcards deploy/bin/amd64/flashcards
 git rev-parse HEAD > crates/web/pack/git-sha
-docker build -f deploy/Containerfile -t flashcards:local .
+docker build -f deploy/Containerfile --build-arg TARGETARCH=amd64 -t flashcards:local .
 docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 ```
 

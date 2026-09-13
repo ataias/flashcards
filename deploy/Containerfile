@@ -6,17 +6,22 @@
 # local recipe) so static files resolve at /src/crates/web/static.
 #
 # Build from the repo root after placing the binary at
-# deploy/bin/<amd64|arm64>/flashcards:
-#   docker build -f deploy/Containerfile -t flashcards:local .
+# deploy/bin/<amd64|arm64>/flashcards. Pass TARGETARCH explicitly
+# (plain `docker build` does not set BuildKit platform ARGs):
+#   docker build -f deploy/Containerfile --build-arg TARGETARCH=amd64 -t flashcards:local .
 
 FROM debian:bookworm-slim
 
-# TARGETARCH is amd64 / arm64 (Buildx sets this per platform).
-ARG TARGETARCH=amd64
+# TARGETARCH is amd64 / arm64. No default: a default after FROM is a
+# BuildKit footgun — arm64 platform builds can still COPY
+# deploy/bin/amd64/... (exec format error on arm64 hosts).
+# Buildx sets this per --platform; publish also passes --build-arg.
+ARG TARGETARCH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        file \
         libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --create-home --home-dir /home/flashcards flashcards \
@@ -28,6 +33,16 @@ COPY --chown=flashcards:flashcards crates/web/static /src/crates/web/static
 # Pack-time identity (git-sha, optional git-tag) written by publish-image.yml.
 # /about reads these at runtime so cargo need not rebuild just to stamp SHA.
 COPY --chown=flashcards:flashcards crates/web/pack /src/crates/web/pack
+
+# Fail the pack if the copied binary does not match this platform.
+RUN set -eu; \
+    info=`file /usr/local/bin/flashcards`; \
+    echo "${info}"; \
+    case "${TARGETARCH}" in \
+      amd64) echo "${info}" | grep -Eq 'x86-64|x86_64' ;; \
+      arm64) echo "${info}" | grep -Eq 'ARM aarch64|aarch64' ;; \
+      *) echo "unsupported or empty TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac
 
 # Uncompressed per-arch filesystem size (not GHCR compressed download size).
 # Measured after COPY so identity files are included; the size file itself is tiny.
