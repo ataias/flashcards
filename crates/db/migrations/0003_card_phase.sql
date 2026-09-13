@@ -1,6 +1,6 @@
--- Persist explicit Card phase + learning step (v1.2).
+-- Persist explicit Card phase + learning step.
 -- Backfill: no FSRS memory → New; has memory → Review (step unused).
--- Learning may have due/last_review without memory, so the v1.1
+-- Learning may have due/last_review without memory, so the previous
 -- "all four FSRS fields together" CHECK is replaced by phase rules.
 -- SQLite cannot ADD/DROP CHECK; rebuild the table.
 
