@@ -31,8 +31,7 @@ async fn main() {
         eprintln!("failed to bind {}: {err}", config.bind);
         std::process::exit(1);
     });
-    // Product cookies stay Secure. Loopback omit-Secure lands later with CSRF.
-    let result = axum::serve(listener, web::app(store, true)).await;
+    let result = axum::serve(listener, web::app(store, config.cookie_secure)).await;
     pool.close().await;
     if let Err(err) = result {
         eprintln!("server error: {err}");

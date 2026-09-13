@@ -75,7 +75,8 @@ async function openDefaultDeck(page: Page): Promise<void> {
     await create.getByLabel("New Deck").fill("Default");
     await create.getByRole("button", { name: "Create" }).click();
     if ((await defaultLink.count()) === 0) {
-      const posted = await page.request.post("/decks", { form: { name: "Default" } });
+      const csrf = await create.locator('input[name="csrf"]').inputValue();
+      const posted = await page.request.post("/decks", { form: { name: "Default", csrf } });
       expect(posted.status(), "create Default deck should not 5xx").toBeLessThan(500);
       await gotoReachable(page, "/");
     }
@@ -99,7 +100,9 @@ async function createCard(page: Page, front: string, back: string): Promise<void
     .catch(() => false);
   if (!appeared) {
     expect(action, "create-card form should expose hx-post").toBeTruthy();
-    const posted = await page.request.post(action!, { form: { front, back } });
+    const csrf = await form.locator('input[name="csrf"]').inputValue();
+    expect(csrf, "create-card form should expose csrf").toBeTruthy();
+    const posted = await page.request.post(action!, { form: { front, back, csrf } });
     expect(posted.status(), "create card POST should not 5xx").toBeLessThan(500);
     await page.reload();
   }
