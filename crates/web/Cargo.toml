@@ -10,7 +10,7 @@ axum = "0.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 domain = { path = "../domain" }
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 
 [dev-dependencies]
