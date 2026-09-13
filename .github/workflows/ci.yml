@@ -59,3 +59,12 @@ jobs:
             -w /workspace \
             flashcards-ci:local \
             ./scripts/checks.sh
+
+      # docker run writes root-owned target/ and cargo mounts; rust-cache
+      # Post tars them on the host and fails (tar exit 2) if it cannot read.
+      - name: Fix cache ownership after container checks
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" \
+            target \
+            "${CARGO_HOME:-$HOME/.cargo}"
