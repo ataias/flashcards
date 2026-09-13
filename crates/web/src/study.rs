@@ -46,7 +46,7 @@ pub async fn study_page<S: Store>(
     State(store): State<S>,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let deck = domain::get_deck(&store, deck_id)
+    let deck = domain::get_deck(&store, crate::LEGACY_USER_ID, deck_id)
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
     let card = next_card(&store, deck_id).await?;
@@ -58,7 +58,7 @@ pub async fn reveal<S: Store>(
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let card = domain::get_card(&store, card_id)
+    let card = domain::get_card(&store, crate::LEGACY_USER_ID, card_id)
         .await?
         .ok_or(domain::Error::CardNotFound { card_id })?;
     render_review(
@@ -79,7 +79,7 @@ pub async fn rate<S: Store>(
     Form(form): Form<RateForm>,
 ) -> Result<Response, AppError> {
     let Some(rating) = Rating::from_grade(form.rating) else {
-        let card = domain::get_card(&store, card_id)
+        let card = domain::get_card(&store, crate::LEGACY_USER_ID, card_id)
             .await?
             .ok_or(domain::Error::CardNotFound { card_id })?;
         return render_review(
@@ -92,7 +92,8 @@ pub async fn rate<S: Store>(
         )
         .await;
     };
-    let (card, _) = domain::rate(&store, card_id, rating, Utc::now()).await?;
+    let (card, _) =
+        domain::rate(&store, crate::LEGACY_USER_ID, card_id, rating, Utc::now()).await?;
     after_rate(&store, card.deck_id, &headers).await
 }
 
@@ -117,7 +118,7 @@ async fn render_review<S: Store>(
     error: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<Response, AppError> {
-    let deck = domain::get_deck(store, deck_id)
+    let deck = domain::get_deck(store, crate::LEGACY_USER_ID, deck_id)
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
     if wants_fragment(headers) {
@@ -155,7 +156,7 @@ fn render_full(
 }
 
 async fn next_card<S: Store>(store: &S, deck_id: i64) -> Result<Option<StudyCard>, AppError> {
-    match domain::next_study_card(store, deck_id, Local::now()).await? {
+    match domain::next_study_card(store, crate::LEGACY_USER_ID, deck_id, Local::now()).await? {
         Some(card) => Ok(Some(study_card(&card)?)),
         None => Ok(None),
     }

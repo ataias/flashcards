@@ -1,14 +1,19 @@
-//! Card, Deck, Review, Store, and study/home use cases.
+//! Card, Deck, Review, User, Session, Store, and study/home use cases.
 
 mod error;
+#[cfg(test)]
+mod fake_store;
 mod home;
 mod interval;
+mod password;
 mod phase;
 mod queue;
 mod rating;
 mod schedule;
 mod store;
 mod use_cases;
+mod user;
+mod user_use_cases;
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -16,6 +21,7 @@ pub use error::Error;
 pub use fsrs::MemoryState;
 pub use home::summarize_home;
 pub use interval::{card_list_due_label, humanize_due_delta};
+pub use password::{hash_password, verify_password};
 pub use phase::{LEARNING_STEPS, Phase, RELEARNING_STEPS};
 pub use queue::{
     NEW_CARDS_PER_LOCAL_DAY, apply_daily_new_cap, capped_new_count_for_local_day, is_due_at,
@@ -28,9 +34,18 @@ pub use use_cases::{
     create_card, create_deck, delete_card, delete_deck, get_card, get_deck, list_deck_cards,
     list_home, next_study_card, rate, rename_deck, update_card,
 };
+pub use user::{
+    DEFAULT_DECK_NAME, SESSION_IDLE, Session, SessionId, USERNAME_MAX_LEN, USERNAME_MIN_LEN, User,
+    normalize_username, usernames_equal,
+};
+pub use user_use_cases::{
+    admin_create_user, admin_delete_user, admin_disable_user, admin_reset_password, authenticate,
+    bootstrap_admin, change_password,
+};
 
 pub type CardId = i64;
 pub type DeckId = i64;
+pub type UserId = i64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
