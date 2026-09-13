@@ -19,13 +19,11 @@ async fn main() {
         Ok(users) => match users.into_iter().next() {
             Some(user) => user.id,
             None => {
-                domain::bootstrap_admin(&store, "admin", "admin")
-                    .await
-                    .unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        std::process::exit(1);
-                    })
-                    .id
+                eprintln!(
+                    "no users in {}; this process does not create an admin",
+                    config.db_path.display()
+                );
+                std::process::exit(1);
             }
         },
         Err(err) => {
