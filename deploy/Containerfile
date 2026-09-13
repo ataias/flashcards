@@ -6,13 +6,17 @@
 # local recipe) so static files resolve at /src/crates/web/static.
 #
 # Build from the repo root after placing the binary at
-# deploy/bin/<amd64|arm64>/flashcards:
-#   docker build -f deploy/Containerfile -t flashcards:local .
+# deploy/bin/<amd64|arm64>/flashcards. Pass TARGETARCH explicitly
+# (plain `docker build` does not set BuildKit platform ARGs):
+#   docker build -f deploy/Containerfile --build-arg TARGETARCH=amd64 -t flashcards:local .
 
 FROM debian:bookworm-slim
 
-# TARGETARCH is amd64 / arm64 (Buildx sets this per platform).
-ARG TARGETARCH=amd64
+# TARGETARCH is amd64 / arm64. No default: a default after FROM is a
+# BuildKit footgun — arm64 platform builds can still COPY
+# deploy/bin/amd64/... (exec format error on arm64 hosts).
+# Buildx sets this per --platform; publish also passes --build-arg.
+ARG TARGETARCH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

@@ -46,7 +46,7 @@ The root [`Containerfile`](Containerfile) is the **CI** toolchain image (fmt, cl
 
 [`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) publishes a **multi-arch** image (`linux/amd64` and `linux/arm64`) to `ghcr.io/ataias/flashcards` on push to `main` and on `workflow_dispatch` from `main`. Tags: `latest` on `main`, plus the short commit SHA (for example `a1b2c3d`). Both tags are multi-arch manifests, not amd64-only images. The publish job writes `crates/web/pack/git-sha` (and `git-tag` on a tag build); `deploy/Containerfile` COPYs those files and records uncompressed per-arch size. `/about` in the image reads them at runtime.
 
-Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**.
+Rust is compiled **natively** on GitHub-hosted runners (`ubuntu-latest` → amd64, `ubuntu-24.04-arm` → arm64) inside `rust:1.98.1-bookworm`, then Buildx only COPY-packs the binaries into `debian:bookworm-slim`. Publish **does not compile Rust under QEMU**. Each platform is packed with an explicit `--platform` / `TARGETARCH`, then `docker buildx imagetools create` writes the multi-arch tags.
 
 Confirm architectures after publish:
 
@@ -74,7 +74,7 @@ docker run --rm -v "$PWD":/src -w /src \
 mkdir -p deploy/bin/amd64 crates/web/pack
 cp target/release/flashcards deploy/bin/amd64/flashcards
 git rev-parse HEAD > crates/web/pack/git-sha
-docker build -f deploy/Containerfile -t flashcards:local .
+docker build -f deploy/Containerfile --build-arg TARGETARCH=amd64 -t flashcards:local .
 docker run --rm -p 3000:3000 -v flashcards-data:/data flashcards:local
 ```
 

@@ -95,6 +95,8 @@ jobs:
           set -euo pipefail
           chmod +x deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
           file deploy/bin/amd64/flashcards deploy/bin/arm64/flashcards
+          file deploy/bin/amd64/flashcards | grep -Eq 'x86-64|x86_64'
+          file deploy/bin/arm64/flashcards | grep -Eq 'ARM aarch64|aarch64'
 
       - name: Write pack-time identity files
         run: |
@@ -129,15 +131,58 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=,format=short
 
-      - name: Pack and push runtime images
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Containerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      # One platform per build + explicit TARGETARCH, then imagetools
+      # create for multi-arch tags. Avoids a single multi-platform build
+      # where ARG TARGETARCH can resolve to the wrong arch.
+      - name: Pack and push linux/amd64
+        env:
+          META_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          label_args=()
+          while IFS= read -r line; do
+            [ -n "${line}" ] && label_args+=(--label "${line}")
+          done <<< "${META_LABELS}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg TARGETARCH=amd64 \
+            --file deploy/Containerfile \
+            --tag "${IMAGE}:${GITHUB_SHA::7}-amd64" \
+            "${label_args[@]}" \
+            --push \
+            .
+
+      - name: Pack and push linux/arm64
+        env:
+          META_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          label_args=()
+          while IFS= read -r line; do
+            [ -n "${line}" ] && label_args+=(--label "${line}")
+          done <<< "${META_LABELS}"
+          docker buildx build \
+            --platform linux/arm64 \
+            --build-arg TARGETARCH=arm64 \
+            --file deploy/Containerfile \
+            --tag "${IMAGE}:${GITHUB_SHA::7}-arm64" \
+            "${label_args[@]}" \
+            --push \
+            .
+
+      - name: Create multi-arch tags
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] && tag_args+=(--tag "${tag}")
+          done <<< "${META_TAGS}"
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            "${IMAGE}:${GITHUB_SHA::7}-amd64" \
+            "${IMAGE}:${GITHUB_SHA::7}-arm64"
 
       - name: Inspect multi-arch manifest
         run: docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA::7}"
