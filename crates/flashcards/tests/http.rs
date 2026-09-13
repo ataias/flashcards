@@ -9,21 +9,27 @@ struct TestDb {
     _dir: tempfile::TempDir,
     pool: SqlitePool,
     store: SqliteStore,
+    user_id: domain::UserId,
 }
 
 async fn test_db() -> TestDb {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("flashcards.db");
     let pool = db::open(&path).await.unwrap();
+    let store = SqliteStore::new(pool.clone());
+    let user = domain::bootstrap_admin(&store, "admin", "secret")
+        .await
+        .unwrap();
     TestDb {
-        store: SqliteStore::new(pool.clone()),
+        store,
         pool,
+        user_id: user.id,
         _dir: dir,
     }
 }
 
 fn app(db: &TestDb) -> Router {
-    web::app(db.store.clone())
+    web::app(db.store.clone(), db.user_id)
 }
 
 async fn request(app: Router, req: Request<Body>) -> (StatusCode, String) {

@@ -168,27 +168,8 @@ pub async fn open(path: impl AsRef<Path>) -> Result<SqlitePool, Error> {
         .max_connections(5)
         .connect_with(options)
         .await?;
-    let first_init = !has_applied_migrations(&pool).await?;
     MIGRATOR.run(&pool).await?;
-    if first_init {
-        ensure_default_deck(&pool).await?;
-    }
     Ok(pool)
-}
-
-async fn has_applied_migrations(pool: &SqlitePool) -> Result<bool, Error> {
-    let exists: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
-    )
-    .fetch_one(pool)
-    .await?;
-    if exists == 0 {
-        return Ok(false);
-    }
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-        .fetch_one(pool)
-        .await?;
-    Ok(n > 0)
 }
 
 /// COUNT+INSERT run in one `BEGIN IMMEDIATE` transaction so concurrent `open`
@@ -727,8 +708,19 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use domain::{Card, Rating, Store, UserId, admin_create_user, bootstrap_admin};
 
-    const USER: UserId = 1;
     use sqlx::sqlite::SqliteConnectOptions;
+
+    async fn store_with_user() -> (SqliteStore, UserId) {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let user = store.create_user("tester", "hash", true).await.unwrap();
+        (store, user.id)
+    }
+
+    async fn store_with_admin() -> (SqliteStore, domain::User) {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let admin = bootstrap_admin(&store, "admin", "secret").await.unwrap();
+        (store, admin)
+    }
 
     fn noon() -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 13, 12, 0, 0).unwrap()
@@ -810,23 +802,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_file_db_is_created_and_seeded() {
+    async fn fresh_file_db_is_created_without_seeded_decks() {
         let path = temp_db_path();
         remove_db(&path);
         assert!(!path.exists());
 
         let pool = open(&path).await.unwrap();
         assert!(path.exists(), "SQLite file must be created on first open");
-        let decks = list_decks(&pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
+        assert!(list_decks(&pool).await.unwrap().is_empty());
+        assert_eq!(count(&pool, "users").await, 0);
 
         pool.close().await;
         remove_db(&path);
     }
 
     #[tokio::test]
-    async fn reopen_does_not_duplicate_default() {
+    async fn reopen_does_not_seed_default() {
         let path = temp_db_path();
         remove_db(&path);
 
@@ -834,25 +825,21 @@ mod tests {
         pool.close().await;
 
         let pool = open(&path).await.unwrap();
-        let decks = list_decks(&pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
+        assert!(list_decks(&pool).await.unwrap().is_empty());
 
         pool.close().await;
         remove_db(&path);
     }
 
     #[tokio::test]
-    async fn existing_empty_file_still_seeds_default() {
+    async fn existing_empty_file_does_not_seed_default() {
         let path = temp_db_path();
         remove_db(&path);
         std::fs::write(&path, []).unwrap();
         assert!(path.exists());
 
         let pool = open(&path).await.unwrap();
-        let decks = list_decks(&pool).await.unwrap();
-        assert_eq!(decks.len(), 1);
-        assert_eq!(decks[0].name, DEFAULT_DECK_NAME);
+        assert!(list_decks(&pool).await.unwrap().is_empty());
 
         pool.close().await;
         remove_db(&path);
@@ -864,7 +851,7 @@ mod tests {
         remove_db(&path);
 
         let pool = open(&path).await.unwrap();
-        let original_id = list_decks(&pool).await.unwrap()[0].id;
+        let original_id = insert_deck(&pool, DEFAULT_DECK_NAME).await;
         delete_deck(&pool, original_id).await.unwrap();
         assert!(list_decks(&pool).await.unwrap().is_empty());
         pool.close().await;
@@ -1239,9 +1226,9 @@ mod tests {
 
     #[tokio::test]
     async fn store_commit_review_schedules_from_row_refetched_in_write_txn() {
-        let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
-        let stale = domain::create_card(&store, USER, deck.id, "Q", "A")
+        let (store, user) = store_with_user().await;
+        let deck = domain::create_deck(&store, user, "Default").await.unwrap();
+        let stale = domain::create_card(&store, user, deck.id, "Q", "A")
             .await
             .unwrap();
         assert!(stale.is_new());
@@ -1249,10 +1236,10 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
         let (first, first_entry) = stale.apply_rating(Rating::Easy, now).unwrap();
         store
-            .commit_review(USER, &first, &first_entry)
+            .commit_review(user, &first, &first_entry)
             .await
             .unwrap();
-        let after_first = domain::get_card(&store, USER, stale.id)
+        let after_first = domain::get_card(&store, user, stale.id)
             .await
             .unwrap()
             .unwrap();
@@ -1266,14 +1253,14 @@ mod tests {
         );
 
         let (persisted, persisted_entry) = store
-            .commit_review(USER, &from_stale, &stale_entry)
+            .commit_review(user, &from_stale, &stale_entry)
             .await
             .unwrap();
         assert_eq!(persisted, expected);
         assert_ne!(persisted.due, from_stale.due);
         assert_eq!(persisted_entry.rating, Rating::Good);
         assert_eq!(persisted_entry.rated_at, later);
-        let stored = domain::get_card(&store, USER, stale.id)
+        let stored = domain::get_card(&store, user, stale.id)
             .await
             .unwrap()
             .unwrap();
@@ -1282,17 +1269,17 @@ mod tests {
 
     #[tokio::test]
     async fn domain_rate_returns_card_that_was_persisted() {
-        let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
-        let stale = domain::create_card(&store, USER, deck.id, "Q", "A")
+        let (store, user) = store_with_user().await;
+        let deck = domain::create_deck(&store, user, "Default").await.unwrap();
+        let stale = domain::create_card(&store, user, deck.id, "Q", "A")
             .await
             .unwrap();
 
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        domain::rate(&store, USER, stale.id, Rating::Easy, now)
+        domain::rate(&store, user, stale.id, Rating::Easy, now)
             .await
             .unwrap();
-        let after_first = domain::get_card(&store, USER, stale.id)
+        let after_first = domain::get_card(&store, user, stale.id)
             .await
             .unwrap()
             .unwrap();
@@ -1301,12 +1288,12 @@ mod tests {
         let from_stale = stale.apply_rating(Rating::Good, later).unwrap().0;
         assert_ne!(expected.due, from_stale.due);
 
-        let (rated, entry) = domain::rate(&store, USER, stale.id, Rating::Good, later)
+        let (rated, entry) = domain::rate(&store, user, stale.id, Rating::Good, later)
             .await
             .unwrap();
         assert_eq!(rated, expected);
         assert_eq!(entry.rated_at, later);
-        let stored = domain::get_card(&store, USER, stale.id)
+        let stored = domain::get_card(&store, user, stale.id)
             .await
             .unwrap()
             .unwrap();
@@ -1315,20 +1302,21 @@ mod tests {
 
     #[tokio::test]
     async fn store_use_cases_round_trip_and_delete_last_deck() {
-        let store = SqliteStore::new(open_memory().await);
-        let seeded = domain::list_home(&store, USER, noon()).await.unwrap();
+        let (store, admin) = store_with_admin().await;
+        let user = admin.id;
+        let seeded = domain::list_home(&store, user, noon()).await.unwrap();
         assert_eq!(seeded.len(), 1);
         assert_eq!(seeded[0].deck.name, DEFAULT_DECK_NAME);
 
-        let extra = domain::create_deck(&store, USER, "Spanish").await.unwrap();
-        let card = domain::create_card(&store, USER, extra.id, "Q", "A")
+        let extra = domain::create_deck(&store, user, "Spanish").await.unwrap();
+        let card = domain::create_card(&store, user, extra.id, "Q", "A")
             .await
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
-        domain::rate(&store, USER, card.id, Rating::Good, now)
+        domain::rate(&store, user, card.id, Rating::Good, now)
             .await
             .unwrap();
-        let stored = domain::get_card(&store, USER, card.id)
+        let stored = domain::get_card(&store, user, card.id)
             .await
             .unwrap()
             .unwrap();
@@ -1337,22 +1325,22 @@ mod tests {
         assert_eq!(stored.learning_step, Some(1));
         assert_eq!(stored.memory, None);
 
-        domain::delete_deck(&store, USER, seeded[0].deck.id)
+        domain::delete_deck(&store, user, seeded[0].deck.id)
             .await
             .unwrap();
-        domain::delete_deck(&store, USER, extra.id).await.unwrap();
+        domain::delete_deck(&store, user, extra.id).await.unwrap();
         assert!(
-            domain::list_home(&store, USER, now)
+            domain::list_home(&store, user, now)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(matches!(
-            domain::delete_deck(&store, USER, extra.id).await.unwrap_err(),
+            domain::delete_deck(&store, user, extra.id).await.unwrap_err(),
             domain::Error::DeckNotFound { deck_id } if deck_id == extra.id
         ));
         assert!(matches!(
-            domain::rate(&store, USER, card.id, Rating::Good, now)
+            domain::rate(&store, user, card.id, Rating::Good, now)
                 .await
                 .unwrap_err(),
             domain::Error::CardNotFound { card_id } if card_id == card.id
@@ -1423,16 +1411,16 @@ mod tests {
 
     #[tokio::test]
     async fn store_commit_review_round_trips_learning_fields() {
-        let store = SqliteStore::new(open_memory().await);
-        let deck = domain::create_deck(&store, USER, "Default").await.unwrap();
-        let card = domain::create_card(&store, USER, deck.id, "Q", "A")
+        let (store, user) = store_with_user().await;
+        let deck = domain::create_deck(&store, user, "Default").await.unwrap();
+        let card = domain::create_card(&store, user, deck.id, "Q", "A")
             .await
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap();
         let (updated, entry) = card.apply_rating(Rating::Good, now).unwrap();
-        store.commit_review(USER, &updated, &entry).await.unwrap();
+        store.commit_review(user, &updated, &entry).await.unwrap();
 
-        let stored = domain::get_card(&store, USER, card.id)
+        let stored = domain::get_card(&store, user, card.id)
             .await
             .unwrap()
             .unwrap();
@@ -1810,9 +1798,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_user_does_not_see_orphans_once_users_exist() {
-        let store = SqliteStore::new(open_memory().await);
-        store.create_user("admin", "hash", true).await.unwrap();
+    async fn missing_user_sees_empty_and_cannot_create() {
+        let store = SqliteStore::new(open_memory_migrations_only().await);
+        let admin = store.create_user("admin", "hash", true).await.unwrap();
+        domain::create_deck(&store, admin.id, "AdminDeck")
+            .await
+            .unwrap();
         let home = domain::list_home(&store, 999, noon()).await.unwrap();
         assert!(home.is_empty());
         assert!(matches!(

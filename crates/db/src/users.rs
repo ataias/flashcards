@@ -9,40 +9,19 @@ use crate::{
     rfc3339,
 };
 
-/// How Deck/Card rows are visible for a Store `user_id`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Scope {
-    /// No users yet: operate on `user_id` NULL (first-open Default, pre-login UI).
-    Orphans,
-    User(UserId),
-    /// `user_id` is not a row, but other Users exist — see nothing / reject writes.
-    Unknown(UserId),
+/// Deck/Card ops run only for a real `users` row. Missing ids are not a
+/// special scope: reads return empty, writes return `UserNotFound`.
+pub(crate) async fn existing_user(
+    pool: &SqlitePool,
+    user_id: UserId,
+) -> Result<Option<UserId>, Error> {
+    Ok(get_user(pool, user_id).await?.map(|user| user.id))
 }
 
-impl Scope {
-    fn owner(self) -> Option<Option<UserId>> {
-        match self {
-            Self::User(id) => Some(Some(id)),
-            Self::Orphans => Some(None),
-            Self::Unknown(_) => None,
-        }
-    }
-}
-
-pub(crate) async fn scope(pool: &SqlitePool, user_id: UserId) -> Result<Scope, Error> {
-    let (total, mine): (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE id = ?)",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await?;
-    if mine > 0 {
-        Ok(Scope::User(user_id))
-    } else if total == 0 {
-        Ok(Scope::Orphans)
-    } else {
-        Ok(Scope::Unknown(user_id))
-    }
+pub(crate) async fn require_user(pool: &SqlitePool, user_id: UserId) -> Result<UserId, Error> {
+    existing_user(pool, user_id)
+        .await?
+        .ok_or(Error::UserNotFound { user_id })
 }
 
 type UserRow = (i64, String, String, i64, i64);
@@ -243,55 +222,35 @@ fn session_from_row(
 
 pub(crate) async fn get_owned_deck(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     deck_id: i64,
 ) -> Result<Option<Deck>, Error> {
-    let Some(owner) = scope.owner() else {
+    if existing_user(pool, user_id).await?.is_none() {
         return Ok(None);
-    };
-    let row = match owner {
-        Some(user_id) => {
-            sqlx::query_as::<_, (i64, String)>(
-                "SELECT id, name FROM decks WHERE id = ? AND user_id = ?",
-            )
-            .bind(deck_id)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as::<_, (i64, String)>(
-                "SELECT id, name FROM decks WHERE id = ? AND user_id IS NULL",
-            )
-            .bind(deck_id)
-            .fetch_optional(pool)
-            .await?
-        }
-    };
+    }
+    let row = sqlx::query_as::<_, (i64, String)>(
+        "SELECT id, name FROM decks WHERE id = ? AND user_id = ?",
+    )
+    .bind(deck_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.map(|(id, name)| Deck { id, name }))
 }
 
-pub(crate) async fn list_owned_decks(pool: &SqlitePool, scope: Scope) -> Result<Vec<Deck>, Error> {
-    let Some(owner) = scope.owner() else {
+pub(crate) async fn list_owned_decks(
+    pool: &SqlitePool,
+    user_id: UserId,
+) -> Result<Vec<Deck>, Error> {
+    if existing_user(pool, user_id).await?.is_none() {
         return Ok(Vec::new());
-    };
-    let rows = match owner {
-        Some(user_id) => {
-            sqlx::query_as::<_, (i64, String)>(
-                "SELECT id, name FROM decks WHERE user_id = ? ORDER BY id",
-            )
-            .bind(user_id)
-            .fetch_all(pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as::<_, (i64, String)>(
-                "SELECT id, name FROM decks WHERE user_id IS NULL ORDER BY id",
-            )
-            .fetch_all(pool)
-            .await?
-        }
-    };
+    }
+    let rows = sqlx::query_as::<_, (i64, String)>(
+        "SELECT id, name FROM decks WHERE user_id = ? ORDER BY id",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
     Ok(rows
         .into_iter()
         .map(|(id, name)| Deck { id, name })
@@ -300,14 +259,10 @@ pub(crate) async fn list_owned_decks(pool: &SqlitePool, scope: Scope) -> Result<
 
 pub(crate) async fn create_owned_deck(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     name: &str,
 ) -> Result<Deck, Error> {
-    let user_id = match scope {
-        Scope::User(id) => Some(id),
-        Scope::Orphans => None,
-        Scope::Unknown(user_id) => return Err(Error::UserNotFound { user_id }),
-    };
+    require_user(pool, user_id).await?;
     let name = normalize_deck_name(name)?;
     let id =
         match sqlx::query_scalar("INSERT INTO decks (name, user_id) VALUES (?, ?) RETURNING id")
@@ -318,9 +273,7 @@ pub(crate) async fn create_owned_deck(
         {
             Ok(id) => id,
             Err(err) if is_foreign_key_violation(&err) => {
-                return Err(Error::UserNotFound {
-                    user_id: user_id.unwrap_or_default(),
-                });
+                return Err(Error::UserNotFound { user_id });
             }
             Err(err) => return Err(Error::from(err)),
         };
@@ -329,31 +282,18 @@ pub(crate) async fn create_owned_deck(
 
 pub(crate) async fn rename_owned_deck(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     deck_id: i64,
     name: &str,
 ) -> Result<Deck, Error> {
+    require_user(pool, user_id).await?;
     let name = normalize_deck_name(name)?;
-    let Some(owner) = scope.owner() else {
-        return Err(Error::DeckNotFound { deck_id });
-    };
-    let result = match owner {
-        Some(user_id) => {
-            sqlx::query("UPDATE decks SET name = ? WHERE id = ? AND user_id = ?")
-                .bind(&name)
-                .bind(deck_id)
-                .bind(user_id)
-                .execute(pool)
-                .await?
-        }
-        None => {
-            sqlx::query("UPDATE decks SET name = ? WHERE id = ? AND user_id IS NULL")
-                .bind(&name)
-                .bind(deck_id)
-                .execute(pool)
-                .await?
-        }
-    };
+    let result = sqlx::query("UPDATE decks SET name = ? WHERE id = ? AND user_id = ?")
+        .bind(&name)
+        .bind(deck_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(Error::DeckNotFound { deck_id });
     }
@@ -362,27 +302,15 @@ pub(crate) async fn rename_owned_deck(
 
 pub(crate) async fn delete_owned_deck(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     deck_id: i64,
 ) -> Result<(), Error> {
-    let Some(owner) = scope.owner() else {
-        return Err(Error::DeckNotFound { deck_id });
-    };
-    let result = match owner {
-        Some(user_id) => {
-            sqlx::query("DELETE FROM decks WHERE id = ? AND user_id = ?")
-                .bind(deck_id)
-                .bind(user_id)
-                .execute(pool)
-                .await?
-        }
-        None => {
-            sqlx::query("DELETE FROM decks WHERE id = ? AND user_id IS NULL")
-                .bind(deck_id)
-                .execute(pool)
-                .await?
-        }
-    };
+    require_user(pool, user_id).await?;
+    let result = sqlx::query("DELETE FROM decks WHERE id = ? AND user_id = ?")
+        .bind(deck_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(Error::DeckNotFound { deck_id });
     }
@@ -391,50 +319,33 @@ pub(crate) async fn delete_owned_deck(
 
 pub(crate) async fn get_owned_card(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     card_id: i64,
 ) -> Result<Option<Card>, Error> {
-    let Some(owner) = scope.owner() else {
+    if existing_user(pool, user_id).await?.is_none() {
         return Ok(None);
-    };
-    let row = match owner {
-        Some(user_id) => {
-            sqlx::query_as::<_, CardRow>(
-                "SELECT cards.id, cards.deck_id, cards.front, cards.back, cards.phase,
-                        cards.learning_step, cards.stability, cards.difficulty, cards.due,
-                        cards.last_review
-                 FROM cards
-                 INNER JOIN decks ON decks.id = cards.deck_id
-                 WHERE cards.id = ? AND decks.user_id = ?",
-            )
-            .bind(card_id)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as::<_, CardRow>(
-                "SELECT cards.id, cards.deck_id, cards.front, cards.back, cards.phase,
-                        cards.learning_step, cards.stability, cards.difficulty, cards.due,
-                        cards.last_review
-                 FROM cards
-                 INNER JOIN decks ON decks.id = cards.deck_id
-                 WHERE cards.id = ? AND decks.user_id IS NULL",
-            )
-            .bind(card_id)
-            .fetch_optional(pool)
-            .await?
-        }
-    };
+    }
+    let row = sqlx::query_as::<_, CardRow>(
+        "SELECT cards.id, cards.deck_id, cards.front, cards.back, cards.phase,
+                cards.learning_step, cards.stability, cards.difficulty, cards.due,
+                cards.last_review
+         FROM cards
+         INNER JOIN decks ON decks.id = cards.deck_id
+         WHERE cards.id = ? AND decks.user_id = ?",
+    )
+    .bind(card_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
     row.map(card_from_row).transpose()
 }
 
 pub(crate) async fn list_owned_card_text(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     deck_id: i64,
 ) -> Result<Vec<CardText>, Error> {
-    if get_owned_deck(pool, scope, deck_id).await?.is_none() {
+    if get_owned_deck(pool, user_id, deck_id).await?.is_none() {
         return Ok(Vec::new());
     }
     let rows = sqlx::query_as::<_, (i64, String, String, String, Option<String>)>(
@@ -458,12 +369,13 @@ pub(crate) async fn list_owned_card_text(
 
 pub(crate) async fn create_owned_card(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     deck_id: i64,
     front: &str,
     back: &str,
 ) -> Result<Card, Error> {
-    if get_owned_deck(pool, scope, deck_id).await?.is_none() {
+    require_user(pool, user_id).await?;
+    if get_owned_deck(pool, user_id, deck_id).await?.is_none() {
         return Err(Error::DeckNotFound { deck_id });
     }
     let front = normalize_card_side(front, true)?;
@@ -495,12 +407,13 @@ pub(crate) async fn create_owned_card(
 
 pub(crate) async fn update_owned_card(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     card_id: i64,
     front: &str,
     back: &str,
 ) -> Result<Card, Error> {
-    if get_owned_card(pool, scope, card_id).await?.is_none() {
+    require_user(pool, user_id).await?;
+    if get_owned_card(pool, user_id, card_id).await?.is_none() {
         return Err(Error::CardNotFound { card_id });
     }
     let front = normalize_card_side(front, true)?;
@@ -520,10 +433,11 @@ pub(crate) async fn update_owned_card(
 
 pub(crate) async fn delete_owned_card(
     pool: &SqlitePool,
-    scope: Scope,
+    user_id: UserId,
     card_id: i64,
 ) -> Result<i64, Error> {
-    if get_owned_card(pool, scope, card_id).await?.is_none() {
+    require_user(pool, user_id).await?;
+    if get_owned_card(pool, user_id, card_id).await?.is_none() {
         return Err(Error::CardNotFound { card_id });
     }
     sqlx::query_scalar("DELETE FROM cards WHERE id = ? RETURNING deck_id")

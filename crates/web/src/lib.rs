@@ -13,14 +13,15 @@ use axum::Router;
 use axum::http::HeaderMap;
 use axum::http::header::{CACHE_CONTROL, HeaderValue};
 use axum::routing::{get, post};
-use domain::Store;
+use domain::{Store, UserId};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
-/// Placeholder owner until HTTP sessions identify the current User.
-/// With no users row yet, Store treats this as the pre-login orphan
-/// space (first-open Default) so the current UI keeps working.
-pub(crate) const LEGACY_USER_ID: domain::UserId = 1;
+#[derive(Clone)]
+pub(crate) struct AppState<S> {
+    store: S,
+    user_id: UserId,
+}
 
 fn wants_fragment(headers: &HeaderMap) -> bool {
     headers
@@ -33,7 +34,7 @@ fn static_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/static")
 }
 
-pub fn app<S>(store: S) -> Router
+pub fn app<S>(store: S, user_id: UserId) -> Router
 where
     S: Store + Clone + Send + Sync + 'static,
 {
@@ -50,7 +51,7 @@ where
         .route("/cards/{id}/delete", post(cards::delete_card::<S>))
         .route("/cards/{id}/reveal", post(study::reveal::<S>))
         .route("/cards/{id}/rate", post(study::rate::<S>))
-        .with_state(store)
+        .with_state(AppState { store, user_id })
         .layer(SetResponseHeaderLayer::overriding(
             CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

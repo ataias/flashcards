@@ -5,7 +5,7 @@ use domain::{
     ReviewLogEntry, Session, Store, StudyInputs, User, UserId,
 };
 
-use crate::users::{self, Scope};
+use crate::users;
 use crate::{SqlitePool, commit_review, first_review_times, list_cards_in_deck, open};
 
 #[derive(Debug, Clone)]
@@ -33,23 +33,17 @@ fn from_db<T>(result: Result<T, crate::Error>) -> Result<T, DomainError> {
     result.map_err(DomainError::from)
 }
 
-async fn scope(store: &SqliteStore, user_id: UserId) -> Result<Scope, DomainError> {
-    from_db(users::scope(&store.pool, user_id).await)
-}
-
 impl Store for SqliteStore {
     async fn get_deck(
         &self,
         user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Option<Deck>, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::get_owned_deck(&self.pool, scope, deck_id).await)
+        from_db(users::get_owned_deck(&self.pool, user_id, deck_id).await)
     }
 
     async fn create_deck(&self, user_id: UserId, name: &str) -> Result<Deck, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::create_owned_deck(&self.pool, scope, name).await)
+        from_db(users::create_owned_deck(&self.pool, user_id, name).await)
     }
 
     async fn rename_deck(
@@ -58,13 +52,11 @@ impl Store for SqliteStore {
         deck_id: DeckId,
         name: &str,
     ) -> Result<Deck, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::rename_owned_deck(&self.pool, scope, deck_id, name).await)
+        from_db(users::rename_owned_deck(&self.pool, user_id, deck_id, name).await)
     }
 
     async fn delete_deck(&self, user_id: UserId, deck_id: DeckId) -> Result<(), DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::delete_owned_deck(&self.pool, scope, deck_id).await)
+        from_db(users::delete_owned_deck(&self.pool, user_id, deck_id).await)
     }
 
     async fn get_card(
@@ -72,8 +64,7 @@ impl Store for SqliteStore {
         user_id: UserId,
         card_id: CardId,
     ) -> Result<Option<Card>, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::get_owned_card(&self.pool, scope, card_id).await)
+        from_db(users::get_owned_card(&self.pool, user_id, card_id).await)
     }
 
     async fn list_card_text_in_deck(
@@ -81,8 +72,7 @@ impl Store for SqliteStore {
         user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Vec<CardText>, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::list_owned_card_text(&self.pool, scope, deck_id).await)
+        from_db(users::list_owned_card_text(&self.pool, user_id, deck_id).await)
     }
 
     async fn create_card(
@@ -92,8 +82,7 @@ impl Store for SqliteStore {
         front: &str,
         back: &str,
     ) -> Result<Card, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::create_owned_card(&self.pool, scope, deck_id, front, back).await)
+        from_db(users::create_owned_card(&self.pool, user_id, deck_id, front, back).await)
     }
 
     async fn update_card(
@@ -103,18 +92,15 @@ impl Store for SqliteStore {
         front: &str,
         back: &str,
     ) -> Result<Card, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::update_owned_card(&self.pool, scope, card_id, front, back).await)
+        from_db(users::update_owned_card(&self.pool, user_id, card_id, front, back).await)
     }
 
     async fn delete_card(&self, user_id: UserId, card_id: CardId) -> Result<DeckId, DomainError> {
-        let scope = scope(self, user_id).await?;
-        from_db(users::delete_owned_card(&self.pool, scope, card_id).await)
+        from_db(users::delete_owned_card(&self.pool, user_id, card_id).await)
     }
 
     async fn load_home_inputs(&self, user_id: UserId) -> Result<HomeInputs, DomainError> {
-        let scope = scope(self, user_id).await?;
-        let decks = from_db(users::list_owned_decks(&self.pool, scope).await)?;
+        let decks = from_db(users::list_owned_decks(&self.pool, user_id).await)?;
         let mut home_decks = Vec::with_capacity(decks.len());
         for deck in decks {
             let cards = from_db(list_cards_in_deck(&self.pool, deck.id).await)?;
@@ -133,8 +119,7 @@ impl Store for SqliteStore {
         user_id: UserId,
         deck_id: DeckId,
     ) -> Result<Option<StudyInputs>, DomainError> {
-        let scope = scope(self, user_id).await?;
-        let Some(deck) = from_db(users::get_owned_deck(&self.pool, scope, deck_id).await)? else {
+        let Some(deck) = from_db(users::get_owned_deck(&self.pool, user_id, deck_id).await)? else {
             return Ok(None);
         };
         let cards = from_db(list_cards_in_deck(&self.pool, deck_id).await)?;
@@ -152,8 +137,8 @@ impl Store for SqliteStore {
         card: &Card,
         entry: &ReviewLogEntry,
     ) -> Result<(Card, ReviewLogEntry), DomainError> {
-        let scope = scope(self, user_id).await?;
-        if from_db(users::get_owned_card(&self.pool, scope, card.id).await)?.is_none() {
+        from_db(users::require_user(&self.pool, user_id).await)?;
+        if from_db(users::get_owned_card(&self.pool, user_id, card.id).await)?.is_none() {
             return Err(DomainError::CardNotFound { card_id: card.id });
         }
         from_db(commit_review(&self.pool, card, entry).await)
