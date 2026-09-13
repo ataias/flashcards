@@ -42,6 +42,14 @@ struct StudyCard {
     easy_interval: String,
 }
 
+struct ReviewView<'a> {
+    deck_id: i64,
+    card: Option<StudyCard>,
+    revealed: bool,
+    error: Option<&'a str>,
+    csrf: &'a str,
+}
+
 #[derive(Deserialize)]
 pub struct RateForm {
     rating: i64,
@@ -75,12 +83,14 @@ pub async fn reveal<S: Store>(
     render_review(
         &store,
         user_id,
-        card.deck_id,
-        Some(study_card(&card)?),
-        true,
-        None,
-        &csrf.0,
         &headers,
+        ReviewView {
+            deck_id: card.deck_id,
+            card: Some(study_card(&card)?),
+            revealed: true,
+            error: None,
+            csrf: &csrf.0,
+        },
     )
     .await
 }
@@ -101,12 +111,14 @@ pub async fn rate<S: Store>(
         return render_review(
             &store,
             user_id,
-            card.deck_id,
-            Some(study_card(&card)?),
-            true,
-            Some("Choose Again, Hard, Good, or Easy."),
-            &csrf.0,
             &headers,
+            ReviewView {
+                deck_id: card.deck_id,
+                card: Some(study_card(&card)?),
+                revealed: true,
+                error: Some("Choose Again, Hard, Good, or Easy."),
+                csrf: &csrf.0,
+            },
         )
         .await;
     };
@@ -123,7 +135,19 @@ async fn after_rate<S: Store>(
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
         let card = next_card(store, user_id, deck_id).await?;
-        render_review(store, user_id, deck_id, card, false, None, csrf, headers).await
+        render_review(
+            store,
+            user_id,
+            headers,
+            ReviewView {
+                deck_id,
+                card,
+                revealed: false,
+                error: None,
+                csrf,
+            },
+        )
+        .await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}/study")).into_response())
     }
@@ -132,29 +156,27 @@ async fn after_rate<S: Store>(
 async fn render_review<S: Store>(
     store: &S,
     user_id: domain::UserId,
-    deck_id: i64,
-    card: Option<StudyCard>,
-    revealed: bool,
-    error: Option<&str>,
-    csrf: &str,
     headers: &HeaderMap,
+    view: ReviewView<'_>,
 ) -> Result<Response, AppError> {
-    let deck = domain::get_deck(store, user_id, deck_id)
+    let deck = domain::get_deck(store, user_id, view.deck_id)
         .await?
-        .ok_or(domain::Error::DeckNotFound { deck_id })?;
+        .ok_or(domain::Error::DeckNotFound {
+            deck_id: view.deck_id,
+        })?;
     if wants_fragment(headers) {
         Ok(Html(
             ReviewTemplate {
-                card,
-                revealed,
-                error: error.map(str::to_string),
-                csrf: csrf.to_string(),
+                card: view.card,
+                revealed: view.revealed,
+                error: view.error.map(str::to_string),
+                csrf: view.csrf.to_string(),
             }
             .render()?,
         )
         .into_response())
     } else {
-        render_full(&deck, card, revealed, error, csrf)
+        render_full(&deck, view.card, view.revealed, view.error, view.csrf)
     }
 }
 
