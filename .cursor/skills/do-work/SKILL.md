@@ -34,7 +34,7 @@ Mandatory workflow for **Full Stack** on this repo. Run at the **start** of an i
 
 - From up-to-date `main`, or from an approved stacked base when stacking (see §6–§7).
 - Name: `issue-N-short-slug` (example: `issue-2-workspace-scaffold`).
-- **One child issue ↔ one PR.** No issue work committed straight to `main`. No PR whose only job is an epic parent.
+- **One child issue ↔ one PR** (default). No issue work committed straight to `main`. No PR whose only job is an epic parent. If a child would become a mega-PR, follow **PR size / split** in §5.
 
 ## 4. Implement
 
@@ -59,6 +59,10 @@ If SQL queries changed: regenerate `.sqlx/` and **commit** it (`SQLX_OFFLINE=tru
 
 If this PR changes the **minimal happy path** the e2e smoke covers (boot → core study; later bootstrap/login), **update `e2e/` in the same PR** and run the smoke locally or rely on the `e2e` CI job. Do not leave Playwright/Lightpanda smoke stale.
 
+**Stacked happy-path / CI harness:** Required `e2e` must stay **green** on every open PR Ataias is asked to review (including stack bottoms). If a stacked PR breaks empty-DB boot before a later PR restores the real happy path (e.g. Users db layer before login/bootstrap UI), keep e2e green with a **stack-only CI harness** (e.g. `seed_ci_admin` / domain bootstrap called only from the e2e runner). Document it as CI harness, not product behavior. The PR that restores the real path **must remove** that harness in the same PR and update `e2e/` to the browser happy path (bootstrap → login → …). **Forbidden:** product env-gated bootstrap (e.g. `FLASHCARDS_BOOTSTRAP_ADMIN_PASSWORD`) or shipping a CI seed as supported empty-DB start. Each stacked PR must be **mergeable up to its point in the stack**. Stack bottoms targeting `main` are independently mergeable. A CI harness may briefly exist on `main` until the restoring PR merges; prefer merging that child soon, but do not block merging the bottom PR.
+
+**PR size / split:** Architect should write child issues thin enough for one reviewable PR each. **One child issue ↔ one PR** still holds, but if implementing a child would produce a mega-PR (many unrelated concerns, huge diff, hard to review in one pass), Full Stack must **stop before requesting Code Reviewer** and either (a) open a **stacked series of PRs** that together close the issue (document the stack in each PR body; only the last `Fixes #N`, or use stacked Fixes carefully), or (b) ping Architect to split the ticket into thinner children — then implement those. Do not ship a mega-PR hoping Code Reviewer will approve. Code Reviewer is the backstop, not the plan. Prefer slices with one main concern; each stack slice must be mergeable to its base with green required CI (including `e2e`).
+
 Until CI exists, still require fmt / clippy / test / build.
 
 **UI visual proof:** For **UI-facing PRs** (HTMX pages/fragments, forms, Study, Deck/Card CRUD, empty states, etc.), cargo checks alone are not enough. Put screenshots and/or a short video in the PR **Test plan** **before** requesting Code Reviewer. CI-only / non-UI PRs do not need screenshots.
@@ -71,7 +75,7 @@ Until CI exists, still require fmt / clippy / test / build.
 - Title: clear, human-scoped, and scoped to the issue. **Do not** put issue numbers in the title (`#38`, `Fixes #38`, `issue 38`, etc.). The issue link belongs in the body only.
 - Body must include:
   - Summary of what changed
-  - `Fixes #N` (body only — never in the title)
+  - `Fixes #N` (body only — never in the title). For a size-split stacked series that together close one issue, only the last PR `Fixes #N` (or use stacked Fixes carefully); earlier slices document the stack instead.
   - **Test plan** (commands you ran; name the HTTP/integration suite that still proves the app — do not N/A wiring-only without naming it; UI-facing PRs must include visual proof — screenshots and/or short video — before requesting Code Reviewer)
   - **SPEC/CONTEXT deviations** (or `none`)
   - Stacking notes when base ≠ `main`
@@ -97,11 +101,11 @@ Do **not** open a fresh PR to “fix” a rebase — update the existing issue b
 
 ## 8. Review and merge rules
 
-1. Request review from **Code Reviewer**. Do not merge your own PR.
+1. Request review from **Code Reviewer**. Do not merge your own PR. Do not request review on a mega-PR — split first (§5). Code Reviewer may reject a mega-PR as a backstop, not as the planned split.
 2. Merge requires **Code Reviewer approval** and **Ataias approval**.
-3. Code Reviewer must confirm: if the PR changes the minimal happy path, `e2e/` smoke still covers boot → that path (Playwright + Lightpanda). Reject stale smoke.
-4. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue.
-5. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once.
+3. Code Reviewer must confirm: if the PR changes the minimal happy path, `e2e/` smoke still covers boot → that path (Playwright + Lightpanda). Reject stale smoke. Required `e2e` must be **green** for review (including stack bottoms). If a stack-only CI seed harness is present, confirm the child/restoring PR deletes it and owns the real smoke; reject product env-gated bootstrap as a bridge. Do not treat pair-merge as a merge gate — a `main`-based stack bottom is independently mergeable even if a harness would briefly exist on `main`.
+4. If CI fails: fix on the **same branch** and push — do not open a second PR for the same issue (a size-split stack per §5 is the exception, not a CI-fix PR).
+5. **Stacking:** after Code Reviewer approves, you may open the next issue’s PR **on top of that branch** without waiting for Ataias’s merge — unless **Blocked by** / **Where to start** says the work needs `main` first (some CI/default-branch cases). If unsure, ask Ataias once. A size-split stack for one mega-child is §5, not this next-issue rule.
 6. Before stacking a new PR, run §7 (rebase) so you are not building on a stale base.
 
 ## 9. Done
