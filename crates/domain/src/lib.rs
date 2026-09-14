@@ -40,7 +40,7 @@ pub use user::{
 };
 pub use user_use_cases::{
     admin_create_user, admin_delete_user, admin_disable_user, admin_reset_password, authenticate,
-    bootstrap_admin, change_password,
+    bootstrap_admin, change_password, logout, logout_everywhere, resolve_session,
 };
 
 pub type CardId = i64;

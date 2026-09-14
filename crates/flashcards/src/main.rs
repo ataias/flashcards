@@ -1,5 +1,4 @@
 use db::SqliteStore;
-use domain::Store;
 use tokio::net::TcpListener;
 use web::Config;
 
@@ -15,23 +14,6 @@ async fn main() {
         std::process::exit(1);
     });
     let store = SqliteStore::new(pool.clone());
-    // TODO: remove when login/bootstrap UI lands
-    let user_id = match store.list_users().await {
-        Ok(users) => match users.into_iter().next() {
-            Some(user) => user.id,
-            None => {
-                eprintln!(
-                    "no users in {}; this process does not create an admin",
-                    config.db_path.display()
-                );
-                std::process::exit(1);
-            }
-        },
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(1);
-        }
-    };
     let decks = db::list_decks(&pool).await.unwrap_or_else(|err| {
         eprintln!("{err}");
         std::process::exit(1);
@@ -49,7 +31,8 @@ async fn main() {
         eprintln!("failed to bind {}: {err}", config.bind);
         std::process::exit(1);
     });
-    let result = axum::serve(listener, web::app(store, user_id)).await;
+    // Product cookies stay Secure. Loopback omit-Secure lands later with CSRF.
+    let result = axum::serve(listener, web::app(store, true)).await;
     pool.close().await;
     if let Err(err) = result {
         eprintln!("server error: {err}");

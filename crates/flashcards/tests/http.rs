@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use db::{SqlitePool, SqliteStore};
 use tower::ServiceExt;
 
@@ -29,7 +29,7 @@ async fn test_db() -> TestDb {
 }
 
 fn app(db: &TestDb) -> Router {
-    web::app(db.store.clone(), db.user_id)
+    web::app(db.store.clone(), true)
 }
 
 async fn owned_deck(db: &TestDb, name: &str) -> db::Deck {
@@ -1267,4 +1267,90 @@ async fn review_good_due_can_be_shorter_than_one_day() {
         due < rated_at + chrono::Duration::days(1),
         "unfloored FSRS Review due should be able to land before one day, got {due}"
     );
+}
+
+fn set_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .find_map(|value| {
+            let value = value.to_str().ok()?;
+            let pair = value.split(';').next()?;
+            let (key, val) = pair.split_once('=')?;
+            (key.trim() == name).then(|| val.trim().to_string())
+        })
+}
+
+async fn empty_db() -> TestDb {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flashcards.db");
+    let pool = db::open(&path).await.unwrap();
+    TestDb {
+        store: SqliteStore::new(pool.clone()),
+        pool,
+        user_id: 0,
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn empty_db_redirects_to_bootstrap_and_keeps_about_public() {
+    let db = empty_db().await;
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/bootstrap");
+
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/decks/1/study")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/bootstrap");
+
+    let (status, html) = get(app(&db), "/about").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Flashcards</h1>"));
+    assert!(html.contains("About"));
+}
+
+#[tokio::test]
+async fn login_sets_secure_session_cookie() {
+    let db = test_db().await;
+    let (status, headers, _) = request_parts(
+        app(&db),
+        Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("username=admin&password=secret"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/");
+    let session = set_cookie_value(&headers, "session").expect("session cookie");
+    let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("Secure"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+
+    let (status, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/")
+            .header(header::COOKIE, format!("session={session}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Default"));
 }

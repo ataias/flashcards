@@ -176,6 +176,22 @@ pub(crate) async fn get_session(
     row.map(session_from_row).transpose()
 }
 
+pub(crate) async fn touch_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<Session>, Error> {
+    let row = sqlx::query_as::<_, (String, i64, String, String)>(
+        "UPDATE sessions SET last_used_at = ? WHERE id = ?
+         RETURNING id, user_id, created_at, last_used_at",
+    )
+    .bind(rfc3339(now))
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(session_from_row).transpose()
+}
+
 pub(crate) async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<(), Error> {
     sqlx::query("DELETE FROM sessions WHERE id = ?")
         .bind(session_id)

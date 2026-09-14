@@ -6,9 +6,9 @@ use chrono::{Local, Utc};
 use domain::{Deck, Rating, Store};
 use serde::Deserialize;
 
-use crate::AppState;
 use crate::assets::Head;
 use crate::error::AppError;
+use crate::session::AuthUser;
 use crate::wants_fragment;
 
 #[derive(Template)]
@@ -46,9 +46,11 @@ pub struct RateForm {
 }
 
 pub async fn study_page<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     let deck = domain::get_deck(&store, user_id, deck_id)
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
@@ -57,10 +59,12 @@ pub async fn study_page<S: Store>(
 }
 
 pub async fn reveal<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     let card = domain::get_card(&store, user_id, card_id)
         .await?
         .ok_or(domain::Error::CardNotFound { card_id })?;
@@ -77,11 +81,13 @@ pub async fn reveal<S: Store>(
 }
 
 pub async fn rate<S: Store>(
-    State(AppState { store, user_id }): State<AppState<S>>,
+    State(store): State<S>,
+    auth: AuthUser,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<RateForm>,
 ) -> Result<Response, AppError> {
+    let user_id = auth.user.id;
     let Some(rating) = Rating::from_grade(form.rating) else {
         let card = domain::get_card(&store, user_id, card_id)
             .await?

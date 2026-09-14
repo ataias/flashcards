@@ -193,6 +193,14 @@ impl Store for SqliteStore {
         from_db(users::get_session(&self.pool, session_id).await)
     }
 
+    async fn touch_session(
+        &self,
+        session_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Session>, DomainError> {
+        from_db(users::touch_session(&self.pool, session_id, now).await)
+    }
+
     async fn delete_session(&self, session_id: &str) -> Result<(), DomainError> {
         from_db(users::delete_session(&self.pool, session_id).await)
     }
