@@ -270,6 +270,32 @@ fn interval_html(label: &str) -> String {
     label.replace('&', "&#38;").replace('<', "&#60;")
 }
 
+fn session_id(auth: &Auth) -> &str {
+    auth.cookies
+        .split(';')
+        .find_map(|part| {
+            let (key, value) = part.trim().split_once('=')?;
+            (key == "session").then_some(value)
+        })
+        .expect("session cookie")
+}
+
+async fn get_redirect(app: Router, path: &str, cookies: Option<&str>) -> (StatusCode, HeaderMap) {
+    let mut builder = Request::builder().uri(path);
+    if let Some(cookies) = cookies {
+        builder = builder.header(header::COOKIE, cookies);
+    }
+    let (status, headers, _) = request(app, builder.body(Body::empty()).unwrap()).await;
+    (status, headers)
+}
+
+async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn about_shows_commit_identity_and_release_link() {
     let db = test_db().await;
@@ -2017,4 +2043,401 @@ async fn non_admin_admin_routes_are_not_found() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn bootstrap_form_is_gone_after_first_admin() {
+    let db = test_db().await;
+    let (status, headers, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/bootstrap")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Create admin"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/bootstrap",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let admin = user_named(&db, "admin").await;
+    assert!(admin.admin);
+    assert!(admin.password_hash.contains("argon2id"));
+    let home = domain::list_home(&db.store, admin.id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(home.len(), 1);
+    assert_eq!(home[0].deck.name, domain::DEFAULT_DECK_NAME);
+
+    let (status, headers) = get_redirect(app(&db), "/bootstrap", None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let (status, headers, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/bootstrap",
+        &format!("username=intruder&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+    assert_eq!(db.store.list_users().await.unwrap().len(), 1);
+    assert!(
+        db.store
+            .get_user_by_username("intruder")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn signed_out_app_routes_redirect_to_login() {
+    let db = test_db().await;
+    let _admin = signed_in(&db).await;
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+
+    for path in [
+        "/".to_string(),
+        "/settings".to_string(),
+        format!("/decks/{deck_id}"),
+        format!("/decks/{deck_id}/study"),
+    ] {
+        let (status, headers) = get_redirect(app(&db), &path, None).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(headers[header::LOCATION], "/login", "{path}");
+    }
+
+    let (status, headers, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/decks",
+        &format!("name=Nope&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+    assert!(
+        db::list_decks(&db.pool)
+            .await
+            .unwrap()
+            .iter()
+            .all(|deck| deck.name != "Nope")
+    );
+
+    let (status, html) = get(app(&db), "/about").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Flashcards</h1>"));
+}
+
+#[tokio::test]
+async fn cross_user_deck_and_card_ids_are_not_found() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let admin_id = user_named(&db, "admin").await.id;
+    domain::admin_create_user(&db.store, admin_id, "member", "pw")
+        .await
+        .unwrap();
+    let member_id = user_named(&db, "member").await.id;
+    let member = signed_in_as(&db, "member", "pw").await;
+
+    let admin_deck = domain::create_deck(&db.store, admin_id, "AdminOnly")
+        .await
+        .unwrap();
+    let admin_card = domain::create_card(&db.store, admin_id, admin_deck.id, "AdminQ", "AdminA")
+        .await
+        .unwrap();
+    let member_deck = domain::create_deck(&db.store, member_id, "MemberOnly")
+        .await
+        .unwrap();
+    let member_card =
+        domain::create_card(&db.store, member_id, member_deck.id, "MemberQ", "MemberA")
+            .await
+            .unwrap();
+
+    let (status, html) = get_auth(app(&db), "/", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("AdminOnly"));
+    assert!(!html.contains("MemberOnly"));
+
+    let (status, html) = get_auth(app(&db), "/", &member).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("MemberOnly"));
+    assert!(!html.contains("AdminOnly"));
+    assert!(!html.contains("href=\"/admin/users\""));
+
+    assert_cross_user_404(&db, &member, admin_deck.id, admin_card.id).await;
+    assert_cross_user_404(&db, &admin, member_deck.id, member_card.id).await;
+
+    let admin_card = db
+        .store
+        .get_card(admin_id, admin_card.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(admin_card.front, "AdminQ");
+    let member_card = db
+        .store
+        .get_card(member_id, member_card.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(member_card.front, "MemberQ");
+}
+
+async fn assert_cross_user_404(db: &TestDb, actor: &Auth, deck_id: i64, card_id: i64) {
+    let gets = [
+        format!("/decks/{deck_id}"),
+        format!("/decks/{deck_id}/study"),
+    ];
+    for path in gets {
+        let (status, html) = get_auth(app(db), &path, actor).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "GET {path}");
+        assert!(!html.contains("AdminOnly"), "GET {path}");
+        assert!(!html.contains("MemberOnly"), "GET {path}");
+    }
+
+    let posts = [
+        (format!("/decks/{deck_id}/rename"), "name=Stolen"),
+        (format!("/decks/{deck_id}/delete"), ""),
+        (format!("/decks/{deck_id}/cards"), "front=X&back=Y"),
+        (format!("/cards/{card_id}"), "front=X&back=Y"),
+        (format!("/cards/{card_id}/delete"), ""),
+        (format!("/cards/{card_id}/reveal"), ""),
+        (format!("/cards/{card_id}/rate"), "rating=3"),
+    ];
+    for (path, body) in posts {
+        let (status, html) = post_form(app(db), &path, body, true, actor).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "POST {path}");
+        assert!(!html.contains("Stolen"), "POST {path}");
+    }
+}
+
+#[tokio::test]
+async fn logout_this_session_leaves_other_sessions() {
+    let db = test_db().await;
+    let first = signed_in(&db).await;
+    let second = signed_in_as(&db, "admin", "secret").await;
+
+    let (status, _) = post_form(app(&db), "/logout", "", false, &first).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store
+            .get_session(session_id(&first))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.store
+            .get_session(session_id(&second))
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let (status, headers) = get_redirect(app(&db), "/", Some(&first.cookies)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let (status, html) = get_auth(app(&db), "/", &second).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Default"));
+}
+
+#[tokio::test]
+async fn logout_everywhere_ends_all_sessions() {
+    let db = test_db().await;
+    let first = signed_in(&db).await;
+    let second = signed_in_as(&db, "admin", "secret").await;
+
+    let (status, _) = post_form(app(&db), "/logout-everywhere", "", false, &first).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store
+            .get_session(session_id(&first))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.store
+            .get_session(session_id(&second))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    for cookies in [&first.cookies, &second.cookies] {
+        let (status, headers) = get_redirect(app(&db), "/", Some(cookies)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(headers[header::LOCATION], "/login");
+    }
+}
+
+#[tokio::test]
+async fn password_change_wipes_every_session() {
+    let db = test_db().await;
+    let first = signed_in(&db).await;
+    let second = signed_in_as(&db, "admin", "secret").await;
+
+    let (status, _) = post_form(
+        app(&db),
+        "/settings",
+        "current=secret&new_password=newer",
+        false,
+        &first,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store
+            .get_session(session_id(&first))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.store
+            .get_session(session_id(&second))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    for cookies in [&first.cookies, &second.cookies] {
+        let (status, headers) = get_redirect(app(&db), "/", Some(cookies)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        assert_eq!(headers[header::LOCATION], "/login");
+    }
+
+    domain::authenticate(&db.store, "admin", "newer", Utc::now())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn delete_user_cascades_owned_data() {
+    let db = test_db().await;
+    let admin = signed_in(&db).await;
+    let admin_id = user_named(&db, "admin").await.id;
+    domain::admin_create_user(&db.store, admin_id, "doomed", "pw")
+        .await
+        .unwrap();
+    let doomed_id = user_named(&db, "doomed").await.id;
+    let doomed = signed_in_as(&db, "doomed", "pw").await;
+    let doomed_deck = domain::create_deck(&db.store, doomed_id, "DoomedDeck")
+        .await
+        .unwrap();
+    let doomed_card =
+        domain::create_card(&db.store, doomed_id, doomed_deck.id, "DoomedQ", "DoomedA")
+            .await
+            .unwrap();
+    domain::rate(
+        &db.store,
+        doomed_id,
+        doomed_card.id,
+        db::Rating::Good,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(count_rows(&db.pool, "review_logs").await, 1);
+    assert!(
+        db.store
+            .get_session(session_id(&doomed))
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let (status, _) = post_form(
+        app(&db),
+        &format!("/admin/users/{doomed_id}/delete"),
+        "",
+        false,
+        &admin,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store
+            .get_user_by_username("doomed")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.store
+            .get_session(session_id(&doomed))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM decks WHERE user_id = ?")
+            .bind(doomed_id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM cards WHERE deck_id = ?")
+            .bind(doomed_deck.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(count_rows(&db.pool, "review_logs").await, 0);
+
+    let (status, headers) = get_redirect(app(&db), "/", Some(&doomed.cookies)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let (status, html) = get_auth(app(&db), "/", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Default"));
+    assert!(!html.contains("DoomedDeck"));
+    let admin_home = domain::list_home(&db.store, admin_id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(admin_home.len(), 1);
+    assert_eq!(admin_home[0].deck.name, domain::DEFAULT_DECK_NAME);
 }
