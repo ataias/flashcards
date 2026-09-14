@@ -68,17 +68,20 @@ async function gotoReachable(page: Page, path: string): Promise<void> {
   expect(response!.status(), `${path} should not 5xx`).toBeLessThan(500);
 }
 
+async function waitForHtmx(page: Page): Promise<void> {
+  await page.waitForFunction(() => "htmx" in window, { timeout: 10_000 });
+}
+
 async function openDefaultDeck(page: Page): Promise<void> {
   const defaultLink = page.getByRole("link", { name: "Default", exact: true });
   if ((await defaultLink.count()) === 0) {
     const create = page.locator("form.create-deck");
     await create.getByLabel("New Deck").fill("Default");
+    await waitForHtmx(page);
     await create.getByRole("button", { name: "Create" }).click();
-    if ((await defaultLink.count()) === 0) {
-      const posted = await page.request.post("/decks", { form: { name: "Default" } });
-      expect(posted.status(), "create Default deck should not 5xx").toBeLessThan(500);
-      await gotoReachable(page, "/");
-    }
+    await expect(defaultLink, "Create should list the Default deck").toBeVisible({
+      timeout: 15_000,
+    });
   }
   await expect(defaultLink).toBeVisible();
   await defaultLink.click();
@@ -88,22 +91,12 @@ async function createCard(page: Page, front: string, back: string): Promise<void
   const form = page.locator("form.create-card");
   await form.getByLabel("Front").fill(front);
   await form.getByLabel("Back").fill(back);
-  const action = await form.getAttribute("hx-post");
-  await page.waitForFunction(() => "htmx" in window, { timeout: 3_000 }).catch(() => undefined);
+  await waitForHtmx(page);
   await form.getByRole("button", { name: "Create Card" }).click();
 
-  const listFront = page.locator(".card-list .card-front", { hasText: front });
-  const appeared = await listFront
-    .waitFor({ state: "visible", timeout: 5_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (!appeared) {
-    expect(action, "create-card form should expose hx-post").toBeTruthy();
-    const posted = await page.request.post(action!, { form: { front, back } });
-    expect(posted.status(), "create card POST should not 5xx").toBeLessThan(500);
-    await page.reload();
-  }
-
-  await expect(listFront).toBeVisible();
+  await expect(
+    page.locator(".card-list .card-front", { hasText: front }),
+    "Create Card should add the front to the list",
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".card-list .card-back", { hasText: back })).toBeVisible();
 }

@@ -15,13 +15,13 @@ use axum::Extension;
 use axum::Router;
 use axum::http::HeaderMap;
 use axum::http::header::{CACHE_CONTROL, HeaderValue};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 use domain::Store;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use session::{CookieSecure, require_auth};
+use session::{CookieSecure, RateLimiter, csrf_middleware, require_auth};
 
 fn wants_fragment(headers: &HeaderMap) -> bool {
     headers
@@ -38,6 +38,7 @@ pub fn app<S>(store: S, cookie_secure: bool) -> Router
 where
     S: Store + Clone + Send + Sync + 'static,
 {
+    let limiter = RateLimiter::default();
     let protected = Router::new()
         .route("/", get(decks::home::<S>))
         .route("/decks", post(decks::create_deck::<S>))
@@ -56,6 +57,8 @@ where
         .route("/about", get(about::about))
         .route("/login", post(auth::login::<S>))
         .merge(protected)
+        .layer(from_fn(csrf_middleware))
+        .layer(Extension(limiter))
         .layer(Extension(CookieSecure(cookie_secure)))
         .with_state(store)
         .layer(SetResponseHeaderLayer::overriding(

@@ -1,5 +1,6 @@
 use axum::Extension;
 use axum::extract::{Form, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::Utc;
@@ -7,7 +8,7 @@ use domain::Store;
 use serde::Deserialize;
 
 use crate::error::AppError;
-use crate::session::{CookieSecure, set_session_cookie};
+use crate::session::{CookieSecure, RateLimiter, client_key, rate_limited, set_session_cookie};
 
 #[derive(Deserialize)]
 pub struct LoginForm {
@@ -15,12 +16,17 @@ pub struct LoginForm {
     password: String,
 }
 
-/// POST-only login (no page yet). Used to set a Session cookie in HTTP tests.
+/// POST-only login (no page yet). Used for session cookies and rate-limit tests.
 pub async fn login<S: Store>(
     State(store): State<S>,
+    Extension(limiter): Extension<RateLimiter>,
     Extension(CookieSecure(secure)): Extension<CookieSecure>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
+    if !limiter.allow(&client_key(&headers)) {
+        return Ok(rate_limited());
+    }
     if store.list_users().await?.is_empty() {
         return Ok(Redirect::to("/bootstrap").into_response());
     }

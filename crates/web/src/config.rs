@@ -10,6 +10,9 @@ pub const DEFAULT_DB_PATH: &str = "./data/flashcards.db";
 pub struct Config {
     pub bind: SocketAddr,
     pub db_path: PathBuf,
+    /// When true, session/CSRF cookies include `Secure`. Defaults to false on
+    /// loopback binds so `cargo run` over HTTP works in Safari; true otherwise.
+    pub cookie_secure: bool,
 }
 
 #[derive(Debug)]
@@ -17,6 +20,9 @@ pub enum ConfigError {
     InvalidBind {
         value: String,
         source: AddrParseError,
+    },
+    InvalidCookieSecure {
+        value: String,
     },
     CreateDataDir {
         path: PathBuf,
@@ -29,6 +35,12 @@ impl std::fmt::Display for ConfigError {
         match self {
             Self::InvalidBind { value, source } => {
                 write!(f, "invalid FLASHCARDS_BIND `{value}`: {source}")
+            }
+            Self::InvalidCookieSecure { value } => {
+                write!(
+                    f,
+                    "invalid FLASHCARDS_COOKIE_SECURE `{value}`: use true, false, 1, or 0"
+                )
             }
             Self::CreateDataDir { path, source } => {
                 write!(
@@ -45,6 +57,7 @@ impl std::error::Error for ConfigError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidBind { source, .. } => Some(source),
+            Self::InvalidCookieSecure { .. } => None,
             Self::CreateDataDir { source, .. } => Some(source),
         }
     }
@@ -55,6 +68,7 @@ impl Config {
         let config = Self::parse(
             env_nonempty("FLASHCARDS_BIND"),
             env_nonempty("FLASHCARDS_DB"),
+            env_nonempty("FLASHCARDS_COOKIE_SECURE"),
         )?;
         config.ensure_db_parent()?;
         Ok(config)
@@ -65,6 +79,7 @@ impl Config {
     pub fn parse(
         bind: Option<impl AsRef<str>>,
         db_path: Option<impl AsRef<str>>,
+        cookie_secure: Option<impl AsRef<str>>,
     ) -> Result<Self, ConfigError> {
         let bind_raw = nonempty_or(bind.as_ref().map(AsRef::as_ref), DEFAULT_BIND).to_string();
         let bind = bind_raw
@@ -77,7 +92,12 @@ impl Config {
             db_path.as_ref().map(AsRef::as_ref),
             DEFAULT_DB_PATH,
         ));
-        Ok(Self { bind, db_path })
+        let cookie_secure = cookie_secure_for(bind, cookie_secure.as_ref().map(AsRef::as_ref))?;
+        Ok(Self {
+            bind,
+            db_path,
+            cookie_secure,
+        })
     }
 
     pub fn ensure_db_parent(&self) -> Result<(), ConfigError> {
@@ -97,6 +117,23 @@ fn nonempty_or<'a>(value: Option<&'a str>, default: &'a str) -> &'a str {
     }
 }
 
+fn cookie_secure_for(bind: SocketAddr, raw: Option<&str>) -> Result<bool, ConfigError> {
+    match raw.filter(|value| !value.is_empty()) {
+        Some(raw) => parse_cookie_secure_flag(raw),
+        None => Ok(!bind.ip().is_loopback()),
+    }
+}
+
+fn parse_cookie_secure_flag(raw: &str) -> Result<bool, ConfigError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(ConfigError::InvalidCookieSecure {
+            value: raw.to_string(),
+        }),
+    }
+}
+
 fn ensure_parent_dir(db_path: &Path) -> Result<(), ConfigError> {
     let Some(parent) = db_path.parent().filter(|p| !p.as_os_str().is_empty()) else {
         return Ok(());
@@ -113,30 +150,57 @@ mod tests {
 
     #[test]
     fn defaults_match_spec() {
-        let config = Config::parse(None::<&str>, None::<&str>).unwrap();
+        let config = Config::parse(None::<&str>, None::<&str>, None::<&str>).unwrap();
         assert_eq!(config.bind, "127.0.0.1:3000".parse().unwrap());
         assert_eq!(config.db_path, PathBuf::from("./data/flashcards.db"));
+        assert!(!config.cookie_secure);
     }
 
     #[test]
     fn bind_and_db_overrides() {
-        let config = Config::parse(Some("0.0.0.0:4000"), Some("/tmp/custom.db")).unwrap();
+        let config =
+            Config::parse(Some("0.0.0.0:4000"), Some("/tmp/custom.db"), None::<&str>).unwrap();
         assert_eq!(config.bind, "0.0.0.0:4000".parse().unwrap());
         assert_eq!(config.db_path, PathBuf::from("/tmp/custom.db"));
+        assert!(config.cookie_secure);
     }
 
     #[test]
     fn empty_bind_and_db_use_defaults() {
-        let config = Config::parse(Some(""), Some("")).unwrap();
+        let config = Config::parse(Some(""), Some(""), Some("")).unwrap();
         assert_eq!(config.bind, "127.0.0.1:3000".parse().unwrap());
         assert_eq!(config.db_path, PathBuf::from("./data/flashcards.db"));
+        assert!(!config.cookie_secure);
     }
 
     #[test]
     fn invalid_bind_is_error() {
-        let err = Config::parse(Some("not-an-addr"), None::<&str>).unwrap_err();
+        let err = Config::parse(Some("not-an-addr"), None::<&str>, None::<&str>).unwrap_err();
         match err {
             ConfigError::InvalidBind { value, .. } => assert_eq!(value, "not-an-addr"),
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn cookie_secure_follows_bind_and_env() {
+        assert!(
+            !Config::parse(Some("[::1]:3000"), None::<&str>, None::<&str>)
+                .unwrap()
+                .cookie_secure
+        );
+        assert!(
+            Config::parse(Some("127.0.0.1:3000"), None::<&str>, Some("true"))
+                .unwrap()
+                .cookie_secure
+        );
+        assert!(
+            !Config::parse(Some("0.0.0.0:3000"), None::<&str>, Some("0"))
+                .unwrap()
+                .cookie_secure
+        );
+        match Config::parse(None::<&str>, None::<&str>, Some("yes")).unwrap_err() {
+            ConfigError::InvalidCookieSecure { value } => assert_eq!(value, "yes"),
             other => panic!("unexpected error: {other}"),
         }
     }
@@ -155,6 +219,7 @@ mod tests {
         let config = Config {
             bind: DEFAULT_BIND.parse().unwrap(),
             db_path: db_path.clone(),
+            cookie_secure: false,
         };
         let _ = std::fs::remove_dir_all(&tmp);
         assert!(!db_path.parent().unwrap().exists());

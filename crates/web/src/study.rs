@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::assets::Head;
 use crate::error::AppError;
-use crate::session::AuthUser;
+use crate::session::{AuthUser, CsrfToken};
 use crate::wants_fragment;
 
 #[derive(Template)]
@@ -20,6 +20,7 @@ struct StudyPageTemplate {
     revealed: bool,
     error: Option<String>,
     head: Head,
+    csrf: String,
 }
 
 #[derive(Template)]
@@ -28,6 +29,7 @@ struct ReviewTemplate {
     card: Option<StudyCard>,
     revealed: bool,
     error: Option<String>,
+    csrf: String,
 }
 
 struct StudyCard {
@@ -40,6 +42,14 @@ struct StudyCard {
     easy_interval: String,
 }
 
+struct ReviewView<'a> {
+    deck_id: i64,
+    card: Option<StudyCard>,
+    revealed: bool,
+    error: Option<&'a str>,
+    csrf: &'a str,
+}
+
 #[derive(Deserialize)]
 pub struct RateForm {
     rating: i64,
@@ -48,6 +58,7 @@ pub struct RateForm {
 pub async fn study_page<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
     let user_id = auth.user.id;
@@ -55,12 +66,13 @@ pub async fn study_page<S: Store>(
         .await?
         .ok_or(domain::Error::DeckNotFound { deck_id })?;
     let card = next_card(&store, user_id, deck_id).await?;
-    render_full(&deck, card, false, None)
+    render_full(&deck, card, false, None, &csrf.0)
 }
 
 pub async fn reveal<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
@@ -71,11 +83,14 @@ pub async fn reveal<S: Store>(
     render_review(
         &store,
         user_id,
-        card.deck_id,
-        Some(study_card(&card)?),
-        true,
-        None,
         &headers,
+        ReviewView {
+            deck_id: card.deck_id,
+            card: Some(study_card(&card)?),
+            revealed: true,
+            error: None,
+            csrf: &csrf.0,
+        },
     )
     .await
 }
@@ -83,6 +98,7 @@ pub async fn reveal<S: Store>(
 pub async fn rate<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<RateForm>,
@@ -95,27 +111,43 @@ pub async fn rate<S: Store>(
         return render_review(
             &store,
             user_id,
-            card.deck_id,
-            Some(study_card(&card)?),
-            true,
-            Some("Choose Again, Hard, Good, or Easy."),
             &headers,
+            ReviewView {
+                deck_id: card.deck_id,
+                card: Some(study_card(&card)?),
+                revealed: true,
+                error: Some("Choose Again, Hard, Good, or Easy."),
+                csrf: &csrf.0,
+            },
         )
         .await;
     };
     let (card, _) = domain::rate(&store, user_id, card_id, rating, Utc::now()).await?;
-    after_rate(&store, user_id, card.deck_id, &headers).await
+    after_rate(&store, user_id, card.deck_id, &csrf.0, &headers).await
 }
 
 async fn after_rate<S: Store>(
     store: &S,
     user_id: domain::UserId,
     deck_id: i64,
+    csrf: &str,
     headers: &HeaderMap,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
         let card = next_card(store, user_id, deck_id).await?;
-        render_review(store, user_id, deck_id, card, false, None, headers).await
+        render_review(
+            store,
+            user_id,
+            headers,
+            ReviewView {
+                deck_id,
+                card,
+                revealed: false,
+                error: None,
+                csrf,
+            },
+        )
+        .await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}/study")).into_response())
     }
@@ -124,27 +156,27 @@ async fn after_rate<S: Store>(
 async fn render_review<S: Store>(
     store: &S,
     user_id: domain::UserId,
-    deck_id: i64,
-    card: Option<StudyCard>,
-    revealed: bool,
-    error: Option<&str>,
     headers: &HeaderMap,
+    view: ReviewView<'_>,
 ) -> Result<Response, AppError> {
-    let deck = domain::get_deck(store, user_id, deck_id)
+    let deck = domain::get_deck(store, user_id, view.deck_id)
         .await?
-        .ok_or(domain::Error::DeckNotFound { deck_id })?;
+        .ok_or(domain::Error::DeckNotFound {
+            deck_id: view.deck_id,
+        })?;
     if wants_fragment(headers) {
         Ok(Html(
             ReviewTemplate {
-                card,
-                revealed,
-                error: error.map(str::to_string),
+                card: view.card,
+                revealed: view.revealed,
+                error: view.error.map(str::to_string),
+                csrf: view.csrf.to_string(),
             }
             .render()?,
         )
         .into_response())
     } else {
-        render_full(&deck, card, revealed, error)
+        render_full(&deck, view.card, view.revealed, view.error, view.csrf)
     }
 }
 
@@ -153,6 +185,7 @@ fn render_full(
     card: Option<StudyCard>,
     revealed: bool,
     error: Option<&str>,
+    csrf: &str,
 ) -> Result<Response, AppError> {
     Ok(Html(
         StudyPageTemplate {
@@ -162,6 +195,7 @@ fn render_full(
             revealed,
             error: error.map(str::to_string),
             head: Head::new(format!("Study — {}", deck.name))?,
+            csrf: csrf.to_string(),
         }
         .render()?,
     )

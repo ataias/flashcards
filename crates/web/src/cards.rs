@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::assets::Head;
 use crate::error::AppError;
-use crate::session::AuthUser;
+use crate::session::{AuthUser, CsrfToken};
 use crate::wants_fragment;
 
 #[derive(Template)]
@@ -20,6 +20,7 @@ struct DeckPageTemplate {
     error: Option<String>,
     draft: CardDraft,
     head: Head,
+    csrf: String,
 }
 
 #[derive(Template)]
@@ -29,6 +30,7 @@ struct CardsTemplate {
     cards: Vec<CardRow>,
     error: Option<String>,
     draft: CardDraft,
+    csrf: String,
 }
 
 struct CardRow {
@@ -97,15 +99,24 @@ pub struct CardForm {
 pub async fn deck_page<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    render_deck_page(&store, user_id, deck_id, None, CardDraft::default()).await
+    render_deck_page(
+        &store,
+        auth.user.id,
+        deck_id,
+        &csrf.0,
+        None,
+        CardDraft::default(),
+    )
+    .await
 }
 
 pub async fn create_card<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
@@ -117,6 +128,7 @@ pub async fn create_card<S: Store>(
                 &store,
                 user_id,
                 deck_id,
+                &csrf.0,
                 &headers,
                 None,
                 CardDraft::default(),
@@ -128,6 +140,7 @@ pub async fn create_card<S: Store>(
                 &store,
                 user_id,
                 deck_id,
+                &csrf.0,
                 &headers,
                 Some("Card front cannot be empty."),
                 CardDraft::from_form(&form, None),
@@ -139,6 +152,7 @@ pub async fn create_card<S: Store>(
                 &store,
                 user_id,
                 deck_id,
+                &csrf.0,
                 &headers,
                 Some("Card back cannot be empty."),
                 CardDraft::from_form(&form, None),
@@ -152,6 +166,7 @@ pub async fn create_card<S: Store>(
 pub async fn update_card<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
     Form(form): Form<CardForm>,
@@ -163,6 +178,7 @@ pub async fn update_card<S: Store>(
                 &store,
                 user_id,
                 card.deck_id,
+                &csrf.0,
                 &headers,
                 None,
                 CardDraft::default(),
@@ -174,6 +190,7 @@ pub async fn update_card<S: Store>(
                 &store,
                 user_id,
                 card_id,
+                &csrf.0,
                 &headers,
                 "Card front cannot be empty.",
                 &form,
@@ -185,6 +202,7 @@ pub async fn update_card<S: Store>(
                 &store,
                 user_id,
                 card_id,
+                &csrf.0,
                 &headers,
                 "Card back cannot be empty.",
                 &form,
@@ -198,6 +216,7 @@ pub async fn update_card<S: Store>(
 pub async fn delete_card<S: Store>(
     State(store): State<S>,
     auth: AuthUser,
+    csrf: CsrfToken,
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
@@ -207,6 +226,7 @@ pub async fn delete_card<S: Store>(
         &store,
         user_id,
         deck_id,
+        &csrf.0,
         &headers,
         None,
         CardDraft::default(),
@@ -218,6 +238,7 @@ async fn card_error<S: Store>(
     store: &S,
     user_id: domain::UserId,
     card_id: i64,
+    csrf: &str,
     headers: &HeaderMap,
     error: &str,
     form: &CardForm,
@@ -229,6 +250,7 @@ async fn card_error<S: Store>(
         store,
         user_id,
         card.deck_id,
+        csrf,
         headers,
         Some(error),
         CardDraft::from_form(form, Some(card_id)),
@@ -240,14 +262,15 @@ async fn after_change<S: Store>(
     store: &S,
     user_id: domain::UserId,
     deck_id: i64,
+    csrf: &str,
     headers: &HeaderMap,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_cards(store, user_id, deck_id, error, draft).await
+        render_cards(store, user_id, deck_id, csrf, error, draft).await
     } else if error.is_some() {
-        render_deck_page(store, user_id, deck_id, error, draft).await
+        render_deck_page(store, user_id, deck_id, csrf, error, draft).await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}")).into_response())
     }
@@ -257,6 +280,7 @@ async fn render_deck_page<S: Store>(
     store: &S,
     user_id: domain::UserId,
     deck_id: i64,
+    csrf: &str,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
@@ -269,6 +293,7 @@ async fn render_deck_page<S: Store>(
             error: error.map(str::to_string),
             draft,
             head: Head::new(format!("{} — Flashcards", deck.name))?,
+            csrf: csrf.to_string(),
         }
         .render()?,
     )
@@ -279,6 +304,7 @@ async fn render_cards<S: Store>(
     store: &S,
     user_id: domain::UserId,
     deck_id: i64,
+    csrf: &str,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
@@ -289,6 +315,7 @@ async fn render_cards<S: Store>(
             cards: card_rows(cards),
             error: error.map(str::to_string),
             draft,
+            csrf: csrf.to_string(),
         }
         .render()?,
     )
