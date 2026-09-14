@@ -34,9 +34,8 @@ pub struct CsrfToken(pub String);
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user: User,
-    /// Live Session when a cookie was presented; placeholder for the
-    /// seed/e2e implicit User. Logout in the UI follow-up reads this.
-    #[allow(dead_code)]
+    /// Live Session when a cookie was presented; empty id for the
+    /// seed/e2e implicit User until the e2e child removes that gate.
     pub session: Session,
 }
 
@@ -126,6 +125,10 @@ pub fn client_key(headers: &HeaderMap) -> String {
 
 pub fn set_session_cookie(headers: &mut HeaderMap, session_id: &str, secure: bool) {
     append_cookie(headers, SESSION_COOKIE, session_id, COOKIE_MAX_AGE, secure);
+}
+
+pub fn clear_session_cookie(headers: &mut HeaderMap, secure: bool) {
+    append_cookie(headers, SESSION_COOKIE, "", 0, secure);
 }
 
 pub fn rate_limited() -> Response {

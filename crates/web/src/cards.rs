@@ -21,6 +21,7 @@ struct DeckPageTemplate {
     draft: CardDraft,
     head: Head,
     csrf: String,
+    username: String,
 }
 
 #[derive(Template)]
@@ -102,15 +103,7 @@ pub async fn deck_page<S: Store>(
     csrf: CsrfToken,
     Path(deck_id): Path<i64>,
 ) -> Result<Response, AppError> {
-    render_deck_page(
-        &store,
-        auth.user.id,
-        deck_id,
-        &csrf.0,
-        None,
-        CardDraft::default(),
-    )
-    .await
+    render_deck_page(&store, &auth, deck_id, &csrf.0, None, CardDraft::default()).await
 }
 
 pub async fn create_card<S: Store>(
@@ -121,12 +114,11 @@ pub async fn create_card<S: Store>(
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    match domain::create_card(&store, user_id, deck_id, &form.front, &form.back).await {
+    match domain::create_card(&store, auth.user.id, deck_id, &form.front, &form.back).await {
         Ok(_) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 deck_id,
                 &csrf.0,
                 &headers,
@@ -138,7 +130,7 @@ pub async fn create_card<S: Store>(
         Err(domain::Error::EmptyCardFront) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 deck_id,
                 &csrf.0,
                 &headers,
@@ -150,7 +142,7 @@ pub async fn create_card<S: Store>(
         Err(domain::Error::EmptyCardBack) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 deck_id,
                 &csrf.0,
                 &headers,
@@ -171,12 +163,11 @@ pub async fn update_card<S: Store>(
     headers: HeaderMap,
     Form(form): Form<CardForm>,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    match domain::update_card(&store, user_id, card_id, &form.front, &form.back).await {
+    match domain::update_card(&store, auth.user.id, card_id, &form.front, &form.back).await {
         Ok(card) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 card.deck_id,
                 &csrf.0,
                 &headers,
@@ -188,7 +179,7 @@ pub async fn update_card<S: Store>(
         Err(domain::Error::EmptyCardFront) => {
             card_error(
                 &store,
-                user_id,
+                &auth,
                 card_id,
                 &csrf.0,
                 &headers,
@@ -200,7 +191,7 @@ pub async fn update_card<S: Store>(
         Err(domain::Error::EmptyCardBack) => {
             card_error(
                 &store,
-                user_id,
+                &auth,
                 card_id,
                 &csrf.0,
                 &headers,
@@ -220,11 +211,10 @@ pub async fn delete_card<S: Store>(
     Path(card_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    let deck_id = domain::delete_card(&store, user_id, card_id).await?;
+    let deck_id = domain::delete_card(&store, auth.user.id, card_id).await?;
     after_change(
         &store,
-        user_id,
+        &auth,
         deck_id,
         &csrf.0,
         &headers,
@@ -236,19 +226,19 @@ pub async fn delete_card<S: Store>(
 
 async fn card_error<S: Store>(
     store: &S,
-    user_id: domain::UserId,
+    auth: &AuthUser,
     card_id: i64,
     csrf: &str,
     headers: &HeaderMap,
     error: &str,
     form: &CardForm,
 ) -> Result<Response, AppError> {
-    let card = domain::get_card(store, user_id, card_id)
+    let card = domain::get_card(store, auth.user.id, card_id)
         .await?
         .ok_or(domain::Error::CardNotFound { card_id })?;
     after_change(
         store,
-        user_id,
+        auth,
         card.deck_id,
         csrf,
         headers,
@@ -260,7 +250,7 @@ async fn card_error<S: Store>(
 
 async fn after_change<S: Store>(
     store: &S,
-    user_id: domain::UserId,
+    auth: &AuthUser,
     deck_id: i64,
     csrf: &str,
     headers: &HeaderMap,
@@ -268,9 +258,9 @@ async fn after_change<S: Store>(
     draft: CardDraft,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_cards(store, user_id, deck_id, csrf, error, draft).await
+        render_cards(store, auth.user.id, deck_id, csrf, error, draft).await
     } else if error.is_some() {
-        render_deck_page(store, user_id, deck_id, csrf, error, draft).await
+        render_deck_page(store, auth, deck_id, csrf, error, draft).await
     } else {
         Ok(Redirect::to(&format!("/decks/{deck_id}")).into_response())
     }
@@ -278,13 +268,13 @@ async fn after_change<S: Store>(
 
 async fn render_deck_page<S: Store>(
     store: &S,
-    user_id: domain::UserId,
+    auth: &AuthUser,
     deck_id: i64,
     csrf: &str,
     error: Option<&str>,
     draft: CardDraft,
 ) -> Result<Response, AppError> {
-    let (deck, cards) = domain::list_deck_cards(store, user_id, deck_id).await?;
+    let (deck, cards) = domain::list_deck_cards(store, auth.user.id, deck_id).await?;
     Ok(Html(
         DeckPageTemplate {
             deck_id: deck.id,
@@ -294,6 +284,7 @@ async fn render_deck_page<S: Store>(
             draft,
             head: Head::new(format!("{} — Flashcards", deck.name))?,
             csrf: csrf.to_string(),
+            username: auth.user.username.clone(),
         }
         .render()?,
     )

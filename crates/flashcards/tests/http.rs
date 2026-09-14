@@ -2,6 +2,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use db::{SqlitePool, SqliteStore};
+use domain::Store;
 use tower::ServiceExt;
 
 struct TestDb {
@@ -165,6 +166,19 @@ async fn csrf_cookie(app: Router) -> String {
     .await;
     assert_eq!(status, StatusCode::OK);
     set_cookie_value(&headers, "csrf").expect("csrf cookie")
+}
+
+async fn csrf_from_home(app: Router) -> (String, String) {
+    let (status, headers, html) = request_parts(
+        app,
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    (
+        extract_csrf(&html),
+        set_cookie_value(&headers, "csrf").expect("csrf cookie"),
+    )
 }
 
 async fn post_form(app: Router, path: &str, body: &str, htmx: bool) -> (StatusCode, String) {
@@ -1319,8 +1333,24 @@ async fn empty_db() -> TestDb {
     }
 }
 
+async fn post_public(
+    app: Router,
+    path: &str,
+    body: &str,
+    cookies: Option<&str>,
+) -> (StatusCode, HeaderMap, String) {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/x-www-form-urlencoded");
+    if let Some(cookies) = cookies {
+        builder = builder.header(header::COOKIE, cookies);
+    }
+    request_parts(app, builder.body(Body::from(body.to_string())).unwrap()).await
+}
+
 #[tokio::test]
-async fn empty_db_redirects_to_bootstrap_and_keeps_about_public() {
+async fn empty_db_shows_bootstrap_and_keeps_about_public() {
     let db = empty_db().await;
     let (status, headers, _) = request_parts(
         app(&db),
@@ -1329,6 +1359,11 @@ async fn empty_db_redirects_to_bootstrap_and_keeps_about_public() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/bootstrap");
+
+    let (status, html) = get(app(&db), "/bootstrap").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Create admin"));
+    assert!(html.contains("No Users yet"));
 
     let (status, headers, _) = request_parts(
         app(&db),
@@ -1361,6 +1396,88 @@ async fn login_attempt(app: Router, csrf: &str, password: &str) -> (StatusCode, 
             .unwrap(),
     )
     .await
+}
+
+#[tokio::test]
+async fn bootstrap_then_login_then_study_requires_session() {
+    let db = empty_db().await;
+    let (status, headers, html) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/bootstrap")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Create admin"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/bootstrap",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/login");
+
+    let (status, headers, html) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Log in</h1>"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/login",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/");
+    let session = set_cookie_value(&headers, "session").expect("session cookie");
+    let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(!set_cookie.contains("Secure"));
+
+    let cookies = format!("session={session}; csrf={csrf_cookie}");
+    let (status, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/")
+            .header(header::COOKIE, &cookies)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Default"));
+    assert!(html.contains("Log out"));
+
+    let deck_id = db::list_decks(&db.pool).await.unwrap()[0].id;
+    let (status, html) = request(
+        app(&db),
+        Request::builder()
+            .uri(format!("/decks/{deck_id}/study"))
+            .header(header::COOKIE, cookies)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<h1>Study</h1>"));
 }
 
 #[tokio::test]
@@ -1404,7 +1521,7 @@ async fn login_rate_limit_trips() {
     let csrf = csrf_cookie(router.clone()).await;
     for i in 0..5 {
         let (status, _, html) = login_attempt(router.clone(), &csrf, "wrong").await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {i}");
+        assert_eq!(status, StatusCode::OK, "attempt {i}");
         assert!(html.contains("Invalid username or password"));
     }
     let (status, _, html) = login_attempt(router, &csrf, "wrong").await;
@@ -1438,4 +1555,121 @@ async fn login_sets_session_cookie_without_secure_on_loopback() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Default"));
+}
+
+#[tokio::test]
+async fn session_cookie_includes_secure_when_configured() {
+    let db = test_db().await;
+    let (status, headers, html) = request_parts(
+        web::app(db.store.clone(), true),
+        Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf_set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(csrf_set_cookie.contains("csrf="));
+    assert!(csrf_set_cookie.contains("Secure"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+
+    let (status, headers, _) = post_public(
+        web::app(db.store.clone(), true),
+        "/login",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let set_cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(set_cookie.contains("session="));
+    assert!(set_cookie.contains("Secure"));
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+}
+
+#[tokio::test]
+async fn logout_and_password_change_end_sessions() {
+    let db = test_db().await;
+    let (csrf, csrf_cookie) = csrf_from_home(app(&db)).await;
+    let (status, headers, _) = post_public(
+        app(&db),
+        "/login",
+        &format!("username=admin&password=secret&csrf={csrf}"),
+        Some(&format!("csrf={csrf_cookie}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let session = set_cookie_value(&headers, "session").expect("session cookie");
+    let cookies = format!("session={session}; csrf={csrf_cookie}");
+
+    let (status, html) = request(
+        app(&db),
+        Request::builder()
+            .uri("/settings")
+            .header(header::COOKIE, &cookies)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Change password"));
+
+    let (status, _) = request(
+        app(&db),
+        Request::builder()
+            .method("POST")
+            .uri("/logout")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header(header::COOKIE, &cookies)
+            .header("X-CSRF-Token", &csrf)
+            .body(Body::from(format!("csrf={csrf}")))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store.get_session(&session).await.unwrap().is_none(),
+        "logout must delete this Session row"
+    );
+
+    let (_, session) = domain::authenticate(&db.store, "admin", "secret", chrono::Utc::now())
+        .await
+        .unwrap();
+    let (status, headers, html) = request_parts(
+        app(&db),
+        Request::builder()
+            .uri("/settings")
+            .header(header::COOKIE, format!("session={}", session.id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Change password"));
+    let csrf = extract_csrf(&html);
+    let csrf_cookie = set_cookie_value(&headers, "csrf").expect("csrf cookie");
+    let cookies = format!("session={}; csrf={csrf_cookie}", session.id);
+
+    let (status, _) = request(
+        app(&db),
+        Request::builder()
+            .method("POST")
+            .uri("/settings")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header(header::COOKIE, &cookies)
+            .header("X-CSRF-Token", &csrf)
+            .body(Body::from(format!(
+                "current=secret&new_password=newer&csrf={csrf}"
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        db.store.get_session(&session.id).await.unwrap().is_none(),
+        "password change must wipe Sessions"
+    );
 }

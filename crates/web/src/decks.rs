@@ -18,6 +18,7 @@ struct HomeTemplate {
     error: Option<String>,
     head: Head,
     csrf: String,
+    username: String,
 }
 
 #[derive(Template)]
@@ -45,7 +46,7 @@ pub async fn home<S: Store>(
     auth: AuthUser,
     csrf: CsrfToken,
 ) -> Result<Response, AppError> {
-    render_home(&store, auth.user.id, &csrf.0, None).await
+    render_home(&store, auth.user.id, &auth.user.username, &csrf.0, None).await
 }
 
 pub async fn create_deck<S: Store>(
@@ -57,11 +58,11 @@ pub async fn create_deck<S: Store>(
 ) -> Result<Response, AppError> {
     let user_id = auth.user.id;
     match domain::create_deck(&store, user_id, &form.name).await {
-        Ok(_) => after_change(&store, user_id, &csrf.0, &headers, None).await,
+        Ok(_) => after_change(&store, &auth, &csrf.0, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 &csrf.0,
                 &headers,
                 Some("Deck name cannot be empty."),
@@ -80,13 +81,12 @@ pub async fn rename_deck<S: Store>(
     headers: HeaderMap,
     Form(form): Form<DeckNameForm>,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    match domain::rename_deck(&store, user_id, deck_id, &form.name).await {
-        Ok(_) => after_change(&store, user_id, &csrf.0, &headers, None).await,
+    match domain::rename_deck(&store, auth.user.id, deck_id, &form.name).await {
+        Ok(_) => after_change(&store, &auth, &csrf.0, &headers, None).await,
         Err(domain::Error::EmptyDeckName) => {
             after_change(
                 &store,
-                user_id,
+                &auth,
                 &csrf.0,
                 &headers,
                 Some("Deck name cannot be empty."),
@@ -104,22 +104,21 @@ pub async fn delete_deck<S: Store>(
     Path(deck_id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let user_id = auth.user.id;
-    domain::delete_deck(&store, user_id, deck_id).await?;
-    after_change(&store, user_id, &csrf.0, &headers, None).await
+    domain::delete_deck(&store, auth.user.id, deck_id).await?;
+    after_change(&store, &auth, &csrf.0, &headers, None).await
 }
 
 async fn after_change<S: Store>(
     store: &S,
-    user_id: domain::UserId,
+    auth: &AuthUser,
     csrf: &str,
     headers: &HeaderMap,
     error: Option<&str>,
 ) -> Result<Response, AppError> {
     if wants_fragment(headers) {
-        render_decks(store, user_id, csrf, error).await
+        render_decks(store, auth.user.id, csrf, error).await
     } else if error.is_some() {
-        render_home(store, user_id, csrf, error).await
+        render_home(store, auth.user.id, &auth.user.username, csrf, error).await
     } else {
         Ok(Redirect::to("/").into_response())
     }
@@ -128,6 +127,7 @@ async fn after_change<S: Store>(
 async fn render_home<S: Store>(
     store: &S,
     user_id: domain::UserId,
+    username: &str,
     csrf: &str,
     error: Option<&str>,
 ) -> Result<Response, AppError> {
@@ -138,6 +138,7 @@ async fn render_home<S: Store>(
             error: error.map(str::to_string),
             head: Head::new("Flashcards")?,
             csrf: csrf.to_string(),
+            username: username.to_string(),
         }
         .render()?,
     )
