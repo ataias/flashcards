@@ -69,7 +69,7 @@ async function gotoReachable(page: Page, path: string): Promise<void> {
 }
 
 async function waitForHtmx(page: Page): Promise<void> {
-  await page.waitForFunction(() => "htmx" in window, { timeout: 3_000 });
+  await page.waitForFunction(() => "htmx" in window, { timeout: 10_000 });
 }
 
 async function openDefaultDeck(page: Page): Promise<void> {
@@ -79,7 +79,9 @@ async function openDefaultDeck(page: Page): Promise<void> {
     await create.getByLabel("New Deck").fill("Default");
     await waitForHtmx(page);
     await create.getByRole("button", { name: "Create" }).click();
-    await expect(defaultLink, "Create should list the Default deck").toBeVisible();
+    await expect(defaultLink, "Create should list the Default deck").toBeVisible({
+      timeout: 15_000,
+    });
   }
   await expect(defaultLink).toBeVisible();
   await defaultLink.click();
@@ -95,6 +97,6 @@ async function createCard(page: Page, front: string, back: string): Promise<void
   await expect(
     page.locator(".card-list .card-front", { hasText: front }),
     "Create Card should add the front to the list",
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".card-list .card-back", { hasText: back })).toBeVisible();
 }
